@@ -1,0 +1,673 @@
+/**
+ * The bench surface: pan, zoom, place parts, drag them around, and wire pin to
+ * pin. All hit-testing goes through the netlist, so a breadboard hole is just
+ * another pin as far as the mouse is concerned.
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { boundsOf, pinWorldPos } from '../sim/geometry';
+import { getModel } from '../sim/registry';
+import { elbow, routeWire, simplify } from '../sim/route';
+import { pinKey } from '../sim/types';
+import { ZOOM_MAX, ZOOM_MIN, useLab } from '../store/lab';
+import { ComponentShape } from './symbols';
+import { COLORS, netColor } from './theme';
+import { placementFor } from './placement';
+import type { PinInfo } from '../sim/netlist';
+import type { Rect } from '../sim/route';
+import type { PinRef, PlacedComponent } from '../sim/types';
+
+type Point = { x: number; y: number };
+
+interface Pending {
+  from: PinRef;
+  pts: Point[];
+  cursor: Point;
+}
+
+type DragState =
+  | { kind: 'comp'; ids: string[]; startX: number; startY: number; dx: number; dy: number }
+  | { kind: 'pan'; startX: number; startY: number; ox: number; oy: number }
+  | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number }
+  | null;
+
+/** Fingers are blunter than a mouse, so widen the pin target on touch. */
+const COARSE_POINTER =
+  typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches === true;
+const HIT_RADIUS = COARSE_POINTER ? 19 : 11;
+
+/**
+ * Where a wire leaves a pin: a short stub along the pin, out of the package.
+ * The length is a whole routing cell, so the stub lands on the router's grid
+ * and the wire does not start with a tiny kink.
+ */
+function stubOut(p: { x: number; y: number; side: string; hole?: boolean }, d = 10): Point {
+  if (p.hole) return { x: p.x, y: p.y };
+  switch (p.side) {
+    case 'L':
+      return { x: p.x - d, y: p.y };
+    case 'R':
+      return { x: p.x + d, y: p.y };
+    case 'T':
+      return { x: p.x, y: p.y - d };
+    default:
+      return { x: p.x, y: p.y + d };
+  }
+}
+
+const stubOfPin = (p: PinInfo, d = 10): Point =>
+  stubOut({ x: p.x, y: p.y, side: p.side, hole: p.def.kind === 'hole' }, d);
+
+export function buildPath(points: Point[]): string {
+  const v = elbow(points);
+  if (!v.length) return '';
+  return `M ${v[0].x} ${v[0].y}` + v.slice(1).map((p) => ` L ${p.x} ${p.y}`).join('');
+}
+
+function distToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = dx * dx + dy * dy;
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+export function Workspace({
+  placing,
+  onPlaced,
+}: {
+  placing: string | null;
+  onPlaced: () => void;
+}) {
+  const lab = useLab();
+  const { circuit, engine, view, tool } = lab;
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [drag, setDrag] = useState<DragState>(null);
+  const [hover, setHover] = useState<PinInfo | null>(null);
+  const pointers = useRef(new Map<number, Point>());
+  const [measured, setMeasured] = useState(false);
+  const pinchRef = useRef<{ dist: number; zoom: number } | null>(null);
+
+  const toWorld = useCallback(
+    (clientX: number, clientY: number): Point => {
+      const rect = svgRef.current?.getBoundingClientRect();
+      if (!rect) return { x: 0, y: 0 };
+      return {
+        x: (clientX - rect.left - view.x) / view.zoom,
+        y: (clientY - rect.top - view.y) / view.zoom,
+      };
+    },
+    [view],
+  );
+
+  const pinAt = useCallback(
+    (p: Point): PinInfo | null => {
+      let best: PinInfo | null = null;
+      let bestD = (HIT_RADIUS / Math.max(view.zoom, 0.35)) ** 2;
+      for (const info of engine.netlist.pins.values()) {
+        const dx = info.x - p.x;
+        const dy = info.y - p.y;
+        const d = dx * dx + dy * dy;
+        if (d < bestD) {
+          bestD = d;
+          best = info;
+        }
+      }
+      return best;
+    },
+    [engine, view.zoom],
+  );
+
+  const compAt = useCallback(
+    (p: Point, boards: boolean): PlacedComponent | null => {
+      const list = circuit.components;
+      for (let i = list.length - 1; i >= 0; i--) {
+        const comp = list[i];
+        const model = getModel(comp.type);
+        if (!model) continue;
+        if (model.category === 'board' !== boards) continue;
+        const b = boundsOf(model, comp);
+        if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) return comp;
+      }
+      return null;
+    },
+    [circuit.components],
+  );
+
+  /**
+   * Pin positions straight from the geometry rather than from the netlist, so
+   * routing is a pure function of the drawing and does not have to wait for the
+   * engine to be rebuilt.
+   */
+  const pinPos = useCallback(
+    (ref: PinRef): { x: number; y: number; side: string; hole: boolean } | null => {
+      const comp = circuit.components.find((c) => c.id === ref.c);
+      const model = comp && getModel(comp.type);
+      if (!comp || !model) return null;
+      const p = pinWorldPos(model, comp, ref.p);
+      if (!p) return null;
+      return { ...p, hole: model.pins.find((d) => d.n === ref.p)?.kind === 'hole' };
+    },
+    [circuit.components],
+  );
+
+  /**
+   * Every wire's path, worked out once per edit. Wires are pushed around the
+   * packages rather than across them, and wires sharing a corridor are nudged
+   * into separate lanes - which is what you would do with real jumpers.
+   */
+  const routes = useMemo(() => {
+    const auto = circuit.settings.autoRoute !== false;
+    const obstacles: Rect[] = circuit.components.flatMap((c) => {
+      const m = getModel(c.type);
+      return !m || m.category === 'board' ? [] : [boundsOf(m, c)];
+    });
+    const lanes = new Map<number, number>();
+    const map = new Map<string, Point[]>();
+
+    for (const w of circuit.wires) {
+      const a = pinPos(w.a);
+      const b = pinPos(w.b);
+      if (!a || !b) continue;
+      // The pins themselves are part of the route, so a wire leaves a package
+      // the way the pin points instead of turning against it.
+      const path = [{ x: a.x, y: a.y }, stubOut(a), ...w.pts, stubOut(b), { x: b.x, y: b.y }];
+      if (!auto) {
+        map.set(w.id, simplify(elbow(path)));
+        continue;
+      }
+      const r = routeWire(path, obstacles, { lanes });
+      for (const cell of r.cells) lanes.set(cell, (lanes.get(cell) ?? 0) + 1);
+      map.set(w.id, simplify(elbow(r.points)));
+    }
+    return map;
+  }, [circuit.components, circuit.wires, circuit.settings.autoRoute, pinPos]);
+
+  const wireAt = useCallback(
+    (p: Point): string | null => {
+      const tol = (COARSE_POINTER ? 10 : 6) / Math.max(view.zoom, 0.35);
+      let best: string | null = null;
+      let bestD = tol;
+      for (const w of circuit.wires) {
+        const v = routes.get(w.id);
+        if (!v) continue;
+        for (let i = 1; i < v.length; i++) {
+          const d = distToSegment(p, v[i - 1], v[i]);
+          if (d < bestD) {
+            bestD = d;
+            best = w.id;
+          }
+        }
+      }
+      return best;
+    },
+    [circuit.wires, routes, view.zoom],
+  );
+
+  const place = useCallback(
+    (type: string, at: Point) => {
+      const model = getModel(type);
+      if (!model) return;
+      const spot = placementFor(circuit, model, at.x, at.y);
+      lab.addComponent(type, spot.x, spot.y, spot.rot);
+    },
+    [circuit, lab],
+  );
+
+  // ---------------------------------------------------------------- pointer
+
+  const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    (e.target as Element).setPointerCapture?.(e.pointerId);
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2) {
+      const [a, b] = [...pointers.current.values()];
+      pinchRef.current = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: view.zoom };
+      setDrag(null);
+      return;
+    }
+
+    const world = toWorld(e.clientX, e.clientY);
+
+    if (placing) {
+      place(placing, world);
+      onPlaced();
+      return;
+    }
+
+    if (e.button === 1 || tool === 'pan' || e.altKey) {
+      setDrag({ kind: 'pan', startX: e.clientX, startY: e.clientY, ox: view.x, oy: view.y });
+      return;
+    }
+
+    const pin = pinAt(world);
+    if (pin && tool !== 'delete') {
+      if (pending) {
+        if (pending.from.c === pin.compId && pending.from.p === pin.pin) return;
+        lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
+        setPending(null);
+      } else {
+        setPending({ from: { c: pin.compId, p: pin.pin }, pts: [], cursor: world });
+      }
+      return;
+    }
+
+    if (pending) {
+      // A click on empty space adds a corner to the wire being drawn.
+      setPending({ ...pending, pts: [...pending.pts, { x: Math.round(world.x), y: Math.round(world.y) }] });
+      return;
+    }
+
+    // Parts first, then wires, then the board underneath everything.
+    const comp = compAt(world, false) ?? (wireAt(world) ? null : compAt(world, true));
+    if (!comp) {
+      const wire = wireAt(world);
+      if (wire) {
+        if (tool === 'delete') lab.deleteWire(wire);
+        else {
+          lab.setSelectedWires([wire]);
+          lab.setSelection([]);
+        }
+        return;
+      }
+    }
+    if (comp) {
+      if (tool === 'delete') {
+        lab.deleteComponents([comp.id]);
+        return;
+      }
+      const already = lab.selection.includes(comp.id);
+      const ids = e.shiftKey
+        ? already
+          ? lab.selection.filter((i) => i !== comp.id)
+          : [...lab.selection, comp.id]
+        : already
+          ? lab.selection
+          : [comp.id];
+      lab.setSelection(ids);
+      lab.setSelectedWires([]);
+      setDrag({ kind: 'comp', ids, startX: world.x, startY: world.y, dx: 0, dy: 0 });
+      return;
+    }
+
+    if (!e.shiftKey) {
+      lab.setSelection([]);
+      lab.setSelectedWires([]);
+    }
+    setDrag({ kind: 'marquee', x0: world.x, y0: world.y, x1: world.x, y1: world.y });
+  };
+
+  const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
+    if (pointers.current.has(e.pointerId)) {
+      pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    }
+    if (pointers.current.size === 2 && pinchRef.current) {
+      const [a, b] = [...pointers.current.values()];
+      const dist = Math.hypot(a.x - b.x, a.y - b.y);
+      const zoom = (pinchRef.current.zoom * dist) / pinchRef.current.dist;
+      // Zoom about the midpoint of the two fingers, so the board stays put.
+      const rect = svgRef.current?.getBoundingClientRect();
+      const px = (a.x + b.x) / 2 - (rect?.left ?? 0);
+      const py = (a.y + b.y) / 2 - (rect?.top ?? 0);
+      lab.setView((v) => {
+        const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
+        const k = z / v.zoom;
+        return { zoom: z, x: px - (px - v.x) * k, y: py - (py - v.y) * k };
+      });
+      return;
+    }
+
+    const world = toWorld(e.clientX, e.clientY);
+
+    if (drag?.kind === 'pan') {
+      lab.setView((v) => ({
+        ...v,
+        x: drag.ox + (e.clientX - drag.startX),
+        y: drag.oy + (e.clientY - drag.startY),
+      }));
+      return;
+    }
+    if (drag?.kind === 'comp') {
+      const step = circuit.settings.snap ? 10 : 1;
+      const dx = Math.round((world.x - drag.startX) / step) * step;
+      const dy = Math.round((world.y - drag.startY) / step) * step;
+      if (dx !== drag.dx || dy !== drag.dy) setDrag({ ...drag, dx, dy });
+      return;
+    }
+    if (drag?.kind === 'marquee') {
+      setDrag({ ...drag, x1: world.x, y1: world.y });
+      return;
+    }
+
+    if (pending) setPending({ ...pending, cursor: world });
+    const pin = pinAt(world);
+    if (pin?.key !== hover?.key) setHover(pin);
+  };
+
+  const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinchRef.current = null;
+
+    if (drag?.kind === 'comp') {
+      if (drag.dx || drag.dy) {
+        const board = circuit.components.find((c) => c.type === 'breadboard');
+        // A part dropped on the board settles into the holes.
+        if (board && drag.ids.length === 1 && drag.ids[0] !== board.id) {
+          const comp = circuit.components.find((c) => c.id === drag.ids[0]);
+          const model = comp && getModel(comp.type);
+          if (comp && model) {
+            const spot = placementFor(circuit, model, comp.x + drag.dx, comp.y + drag.dy, comp.rot, comp.id);
+            lab.setComponentPos(comp.id, spot.x, spot.y, spot.rot);
+            setDrag(null);
+            return;
+          }
+        }
+        lab.moveComponents(drag.ids, drag.dx, drag.dy);
+      }
+      setDrag(null);
+      return;
+    }
+
+    if (drag?.kind === 'marquee') {
+      const x0 = Math.min(drag.x0, drag.x1);
+      const x1 = Math.max(drag.x0, drag.x1);
+      const y0 = Math.min(drag.y0, drag.y1);
+      const y1 = Math.max(drag.y0, drag.y1);
+      if (x1 - x0 > 4 || y1 - y0 > 4) {
+        const hit = circuit.components.filter((c) => {
+          const model = getModel(c.type);
+          if (!model || model.category === 'board') return false;
+          const b = boundsOf(model, c);
+          return b.x < x1 && b.x + b.w > x0 && b.y < y1 && b.y + b.h > y0;
+        });
+        lab.setSelection(hit.map((c) => c.id));
+      }
+      setDrag(null);
+      return;
+    }
+
+    // Finish a wire that was drawn by dragging from one pin to another.
+    if (pending && e.button === 0) {
+      const world = toWorld(e.clientX, e.clientY);
+      const pin = pinAt(world);
+      if (pin && !(pin.compId === pending.from.c && pin.pin === pending.from.p)) {
+        const moved =
+          Math.hypot(world.x - pending.cursor.x, world.y - pending.cursor.y) < 2 &&
+          pending.pts.length === 0;
+        if (!moved || true) {
+          lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
+          setPending(null);
+        }
+      }
+    }
+    setDrag(null);
+  };
+
+  /**
+   * The wheel belongs to the bench, not to the browser.
+   *
+   * React registers its own wheel handler passively, so preventDefault() from
+   * an onWheel prop is ignored and Ctrl+wheel zooms the whole page instead of
+   * the workspace. Listening here, non-passively, is what keeps the zoom
+   * inside the bench.
+   */
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = el.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      if (e.ctrlKey || e.metaKey) {
+        // Exponential so a trackpad glides and a mouse notch is a sane step.
+        const step = Math.exp(-e.deltaY / 500);
+        lab.setView((v) => {
+          const zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, v.zoom * step));
+          const k = zoom / v.zoom;
+          return { zoom, x: px - (px - v.x) * k, y: py - (py - v.y) * k };
+        });
+      } else {
+        lab.setView((v) => ({ ...v, x: v.x - e.deltaX, y: v.y - e.deltaY }));
+      }
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [lab]);
+
+  // Report the drawing area so Fit can frame the bench on any screen.
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const report = () => {
+      const r = el.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        lab.setViewport(r.width, r.height);
+        setMeasured(true);
+      }
+    };
+    report();
+    const ro = new ResizeObserver(report);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [lab]);
+
+  // Frame the bench on first paint and whenever a new circuit is loaded.
+  useEffect(() => {
+    if (measured) lab.fitToContents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [measured, lab.fitRequest]);
+
+  // ------------------------------------------------------------- keyboard
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+
+      if (e.key === 'Escape') {
+        setPending(null);
+        lab.setSelection([]);
+        lab.setSelectedWires([]);
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        lab.deleteSelection();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) lab.redo();
+        else lab.undo();
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {
+        e.preventDefault();
+        lab.redo();
+      } else if ((e.ctrlKey || e.metaKey) && ['+', '=', '-', '_'].includes(e.key)) {
+        // Ctrl+plus / Ctrl+minus zoom the bench, not the browser window.
+        e.preventDefault();
+        const inward = e.key === '+' || e.key === '=';
+        lab.setView((v) => ({ ...v, zoom: v.zoom * (inward ? 1.15 : 1 / 1.15) }));
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd') {
+        e.preventDefault();
+        lab.duplicateSelection();
+      } else if (!e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'r') {
+        lab.rotateSelection();
+      } else if (!e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'w') {
+        lab.setTool('wire');
+      } else if (!e.ctrlKey && !e.metaKey && e.key.toLowerCase() === 'v') {
+        lab.setTool('select');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [lab]);
+
+  // ---------------------------------------------------------------- render
+
+  const wires = useMemo(() => {
+    void lab.version;
+    return circuit.wires.map((w) => {
+      const v = routes.get(w.id);
+      if (!v) return null;
+      const net = engine.netStateAt(w.a.c, w.a.p);
+      const color = lab.showWireState ? netColor(engine, w.a.c, w.a.p) : w.color;
+      const selected = lab.selectedWires.includes(w.id);
+      const d = `M ${v[0].x} ${v[0].y}` + v.slice(1).map((p) => ` L ${p.x} ${p.y}`).join('');
+      return (
+        <g key={w.id} pointerEvents="none">
+          <path className="wire" d={d} stroke="var(--sheet-bg)" strokeWidth={5.5} opacity={0.9} />
+          <path
+            className={`wire ${lab.showWireState && net?.floating ? 'wire-float' : ''}`}
+            d={d}
+            stroke={selected ? COLORS.accent : color}
+            strokeWidth={selected ? 3.5 : 2.6}
+          />
+        </g>
+      );
+    });
+  }, [circuit.wires, engine, lab, routes]);
+
+  const pendingPath = useMemo(() => {
+    if (!pending) return null;
+    const from = engine.netlist.pins.get(pinKey(pending.from.c, pending.from.p));
+    if (!from) return null;
+    const target = hover ? { x: hover.x, y: hover.y } : pending.cursor;
+    const pts = [{ x: from.x, y: from.y }, stubOfPin(from), ...pending.pts, target];
+    return (
+      <g pointerEvents="none">
+        <path
+          className="wire"
+          d={buildPath(pts)}
+          stroke={COLORS.accent}
+          strokeWidth={2.6}
+          strokeDasharray="6 4"
+        />
+        {pending.pts.map((p, i) => (
+          <circle key={i} cx={p.x} cy={p.y} r={3} fill={COLORS.accent} />
+        ))}
+      </g>
+    );
+  }, [pending, hover, engine]);
+
+  const gridSize = 20;
+
+  return (
+    <div className="relative h-full w-full overflow-hidden workspace">
+      <svg
+        ref={svgRef}
+        className="h-full w-full select-none"
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setPending(null);
+        }}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          const type = e.dataTransfer.getData('text/component');
+          if (type) place(type, toWorld(e.clientX, e.clientY));
+        }}
+        style={{ cursor: tool === 'pan' ? 'grab' : pending ? 'crosshair' : 'default' }}
+      >
+        <defs>
+          <pattern
+            id="grid"
+            width={gridSize * view.zoom}
+            height={gridSize * view.zoom}
+            patternUnits="userSpaceOnUse"
+            x={view.x}
+            y={view.y}
+          >
+            <circle cx={0.5} cy={0.5} r={1} fill="var(--sheet-grid)" />
+          </pattern>
+        </defs>
+        {circuit.settings.grid && <rect width="100%" height="100%" fill="url(#grid)" />}
+
+        <g transform={`translate(${view.x} ${view.y}) scale(${view.zoom})`}>
+          {circuit.components.map((comp) => {
+            const model = getModel(comp.type);
+            if (!model) return null;
+            const dragging = drag?.kind === 'comp' && drag.ids.includes(comp.id);
+            const offset = dragging ? `translate(${drag.dx} ${drag.dy})` : undefined;
+            return (
+              <g key={comp.id} transform={offset} opacity={dragging ? 0.75 : 1}>
+                <ComponentShape
+                  comp={comp}
+                  model={model}
+                  engine={engine}
+                  selected={lab.selection.includes(comp.id)}
+                  hoverPin={hover?.compId === comp.id ? hover.pin : null}
+                  wireMode={tool === 'wire' || !!pending}
+                  onProps={(props) => lab.setProps(comp.id, props)}
+                />
+              </g>
+            );
+          })}
+
+          {wires}
+          {pendingPath}
+
+          {drag?.kind === 'marquee' && (
+            <rect
+              x={Math.min(drag.x0, drag.x1)}
+              y={Math.min(drag.y0, drag.y1)}
+              width={Math.abs(drag.x1 - drag.x0)}
+              height={Math.abs(drag.y1 - drag.y0)}
+              fill={COLORS.accent}
+              fillOpacity={0.08}
+              stroke={COLORS.accent}
+              strokeDasharray="4 3"
+            />
+          )}
+        </g>
+      </svg>
+
+      {hover && (
+        <div className="pointer-events-none absolute left-3 top-3 rounded-md border border-bench-700 bg-bench-900/95 px-3 py-2 text-[11px] shadow-lg">
+          <div className="font-mono text-bench-200">
+            {hover.comp.label ?? hover.model.label} &middot; pin {hover.pin} &middot;{' '}
+            <span className="text-accent">{hover.def.name}</span>
+          </div>
+          <div className="mt-0.5 max-w-[260px] text-bench-400">{hover.def.fn}</div>
+          <div className="mt-1 flex items-center gap-2 text-bench-400">
+            level
+            <span className="font-mono text-bench-100">{String(engine.valueAt(hover.compId, hover.pin))}</span>
+            {engine.netStateAt(hover.compId, hover.pin)?.floating && (
+              <span className="text-warn">floating</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {pending && (
+        <div className="absolute bottom-3 left-1/2 flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-full border border-accent/40 bg-bench-900 px-3 py-1.5 text-[11px] text-accent shadow-lg">
+          <span className="truncate">Drawing a wire - tap a pin to finish, tap the sheet for a corner</span>
+          <button
+            className="btn btn-sm shrink-0"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              setPending(null);
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+
+      {placing && (
+        <div className="absolute bottom-3 left-1/2 flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-full border border-accent/40 bg-bench-900 px-3 py-1.5 text-[11px] text-accent shadow-lg">
+          <span className="truncate">Tap the bench to place {getModel(placing)?.label}</span>
+          <button
+            className="btn btn-sm shrink-0"
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              onPlaced();
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+

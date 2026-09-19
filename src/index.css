@@ -1,0 +1,482 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------------------------------------------------------------- themes */
+/*
+ * Two palettes, one set of names. Tailwind reads the `--bench-*` channels
+ * (so opacity modifiers still work); the SVG bench reads the named colours
+ * below straight out of `fill="var(--ic-body)"`.
+ *
+ * Light is the default: a white lab bench with black IC packages and a cream
+ * breadboard, which is what the hardware actually looks like.
+ */
+
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --bench-950: 237 241 247;
+  --bench-900: 255 255 255;
+  --bench-850: 245 247 250;
+  --bench-800: 228 233 240;
+  --bench-700: 206 214 225;
+  --bench-600: 164 176 192;
+  --bench-500: 120 133 152;
+  --bench-400: 90 104 122;
+  --bench-300: 62 75 92;
+  --bench-200: 43 54 68;
+  --bench-100: 24 33 45;
+  --bench-50: 13 20 30;
+
+  --accent: 14 116 144;
+  --accent-soft: 8 145 178;
+  --accent-fg: 255 255 255;
+
+  --ok: 4 120 87;
+  --warn: 180 83 9;
+  --err: 185 28 28;
+  --info: 3 105 161;
+
+  --sig-high: 220 38 38;
+  --sig-low: 37 99 235;
+  --sig-float: 217 119 6;
+
+  /* Named colours for the SVG bench */
+  --c-high: #dc2626;
+  --c-low: #2563eb;
+  --c-float: #d97706;
+  --c-z: #7c3aed;
+  --c-vcc: #dc2626;
+  --c-gnd: #64748b;
+  --c-idle: #94a3b8;
+  --c-accent: #0e7490;
+
+  --sheet-bg: #fbfcfe;
+  --sheet-tint-a: #eef3f9;
+  --sheet-tint-b: #f4f1ec;
+  --sheet-grid: #ccd5e2;
+
+  --ic-body: #222a35;
+  --ic-body-edge: #0f141b;
+  --ic-top: #333c4a;
+  --ic-notch: #12171e;
+  --ic-text: #eef2f8;
+  --ic-sub: #97a3b4;
+  --ic-leg: #98a4b5;
+  --pin-num: #64748b;
+  --pin-name: #c3ccd9;
+  --pin-in: #7dd3fc;
+  --pin-out: #a5b4fc;
+  --pin-pwr: #fca5a5;
+  --pin-gnd: #cbd5e1;
+  --pin-nc: #64748b;
+  --pin-ring: #0f141b;
+
+  --mod-body: #ffffff;
+  --mod-edge: #c8d1de;
+  --mod-title: #ffffff;
+  --mod-inset: #eef1f6;
+  --mod-slot: #d7dee8;
+  --mod-text: #5a6878;
+  --mod-label: #33415a;
+
+  --bar-writer: #1d4ed8;
+  --bar-reader: #047857;
+  --bar-clock: #6d28d9;
+  --bar-switch: #475569;
+  --bar-display: #b45309;
+
+  --lead: #8f9cad;
+  --board-body: #f2f1ee;
+  --board-edge: #cfd3d9;
+  --board-hole: #ffffff;
+  --board-hole-edge: #9aa3b0;
+  --board-channel: #e6e5e1;
+  --board-mark: #8892a2;
+  --board-plus: #d4293a;
+  --board-minus: #2563eb;
+
+  --seg-off: #e3e6ea;
+  --seg-bg: #1b2028;
+  --scope-bg: #ffffff;
+  --scope-line: #e2e8f0;
+
+  --scrim: rgb(15 23 42 / 0.45);
+  --shadow-soft: 0 1px 2px rgb(15 23 42 / 0.06), 0 1px 3px rgb(15 23 42 / 0.1);
+  --shadow-pop: 0 10px 30px rgb(15 23 42 / 0.16);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --bench-950: 11 15 20;
+  --bench-900: 16 21 28;
+  --bench-850: 21 27 36;
+  --bench-800: 27 34 45;
+  --bench-700: 39 48 65;
+  --bench-600: 58 70 92;
+  --bench-500: 91 107 134;
+  --bench-400: 138 154 180;
+  --bench-300: 185 196 214;
+  --bench-200: 215 222 234;
+  --bench-100: 233 238 246;
+  --bench-50: 245 248 252;
+
+  --accent: 34 211 238;
+  --accent-soft: 14 116 144;
+  --accent-fg: 8 14 20;
+
+  --ok: 52 211 153;
+  --warn: 251 191 36;
+  --err: 248 113 113;
+  --info: 125 211 252;
+
+  --sig-high: 255 85 85;
+  --sig-low: 59 130 246;
+  --sig-float: 245 158 11;
+
+  --c-high: #ff5555;
+  --c-low: #3b82f6;
+  --c-float: #f59e0b;
+  --c-z: #a78bfa;
+  --c-vcc: #ef4444;
+  --c-gnd: #7c8da6;
+  --c-idle: #475569;
+  --c-accent: #22d3ee;
+
+  --sheet-bg: #0d1219;
+  --sheet-tint-a: #16202c;
+  --sheet-tint-b: #131a23;
+  --sheet-grid: #233043;
+
+  --ic-body: #191d24;
+  --ic-body-edge: #05070a;
+  --ic-top: #232935;
+  --ic-notch: #0b0f14;
+  --ic-text: #e8edf5;
+  --ic-sub: #64748b;
+  --ic-leg: #94a3b8;
+  --pin-num: #7d8ba3;
+  --pin-name: #b7c3d6;
+  --pin-in: #7dd3fc;
+  --pin-out: #a5b4fc;
+  --pin-pwr: #fca5a5;
+  --pin-gnd: #94a3b8;
+  --pin-nc: #475569;
+  --pin-ring: #0b0f14;
+
+  --mod-body: #141a23;
+  --mod-edge: #2a3444;
+  --mod-title: #dbeafe;
+  --mod-inset: #111823;
+  --mod-slot: #1e2733;
+  --mod-text: #8b9ab3;
+  --mod-label: #b7c3d6;
+
+  --bar-writer: #1e3a5f;
+  --bar-reader: #14532d;
+  --bar-clock: #4c1d95;
+  --bar-switch: #3f3f46;
+  --bar-display: #422006;
+
+  --lead: #64748b;
+  --board-body: #dfe3e8;
+  --board-edge: #4b5563;
+  --board-hole: #0d1117;
+  --board-hole-edge: #39434f;
+  --board-channel: #0b0f14;
+  --board-mark: #64748b;
+  --board-plus: #ef4444;
+  --board-minus: #60a5fa;
+
+  --seg-off: #161d27;
+  --seg-bg: #0a0d12;
+  --scope-bg: #0b0f14;
+  --scope-line: #1e2733;
+
+  --scrim: rgb(0 0 0 / 0.6);
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-pop: 0 12px 34px rgb(0 0 0 / 0.55);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Use the real visible height on a phone, so the toolbar and the bench I/O
+   strip are not hidden behind the browser chrome. */
+@supports (height: 100dvh) {
+  html,
+  body,
+  #root {
+    height: 100dvh;
+  }
+}
+
+html {
+  /* Taps act immediately and never zoom the page: the workspace has its own. */
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  overflow: hidden;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+  background: rgb(var(--bench-950));
+  color: rgb(var(--bench-300));
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-size: 14px;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ------------------------------------------------------------------ chrome */
+
+.panel {
+  background: rgb(var(--bench-900));
+  border: 1px solid rgb(var(--bench-800));
+}
+
+.panel-head {
+  @apply flex items-center gap-2 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-bench-400;
+  border-bottom: 1px solid rgb(var(--bench-800));
+  background: rgb(var(--bench-850));
+}
+
+.btn {
+  @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-md border border-bench-700 bg-bench-900 px-2.5 py-1.5 text-[12px] font-medium text-bench-300 transition;
+  box-shadow: var(--shadow-soft);
+}
+.btn:hover:not(:disabled) {
+  @apply border-bench-600 bg-bench-850 text-bench-50;
+}
+.btn:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+.btn:disabled {
+  @apply cursor-not-allowed opacity-40;
+  box-shadow: none;
+}
+.btn-primary {
+  @apply border-transparent bg-accent font-semibold text-accent-fg;
+}
+.btn-primary:hover:not(:disabled) {
+  @apply bg-accent-soft text-accent-fg;
+}
+.btn-danger:hover:not(:disabled) {
+  @apply border-err/50 bg-err/10 text-err;
+}
+.btn-active {
+  @apply border-accent/60 bg-accent/10 text-accent;
+}
+.btn-sm {
+  @apply px-2 py-1 text-[11px];
+}
+
+/* Comfortable touch targets on phones and tablets. */
+@media (pointer: coarse) {
+  .btn {
+    @apply px-3 py-2 text-[12.5px];
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-[12px];
+  }
+  .tab {
+    @apply px-3.5 py-2.5;
+  }
+}
+
+.field {
+  @apply w-full rounded-md border border-bench-700 bg-bench-900 px-2 py-1.5 text-[12px] text-bench-200 outline-none;
+}
+.field:focus {
+  @apply border-accent;
+  box-shadow: 0 0 0 3px rgb(var(--accent) / 0.15);
+}
+
+.chip {
+  @apply inline-flex items-center gap-1 rounded-full border border-bench-700 bg-bench-850 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-bench-400;
+}
+
+.scroll-y {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--bench-600)) transparent;
+}
+.scroll-y::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.scroll-y::-webkit-scrollbar-thumb {
+  background: rgb(var(--bench-700));
+  border-radius: 6px;
+}
+.scroll-y::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ------------------------------------------------------------- workspace */
+
+.workspace {
+  background:
+    radial-gradient(circle at 18% -5%, var(--sheet-tint-a) 0%, transparent 55%),
+    radial-gradient(circle at 100% 100%, var(--sheet-tint-b) 0%, transparent 45%),
+    var(--sheet-bg);
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+.pin-hit {
+  cursor: crosshair;
+}
+
+.ic-label {
+  fill: var(--ic-text);
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.pin-num {
+  fill: var(--pin-num);
+  font-size: 8px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.pin-name {
+  fill: var(--pin-name);
+  font-size: 9px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.part-label {
+  fill: var(--mod-label);
+  font-size: 9px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.module-title {
+  fill: var(--mod-title);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+}
+
+.selected-outline {
+  fill: none;
+  stroke: var(--c-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 3;
+}
+
+.wire {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+@keyframes flow {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+.wire-float {
+  stroke-dasharray: 7 5;
+  animation: flow 0.9s linear infinite;
+}
+
+.led-glow {
+  filter: drop-shadow(0 0 6px currentColor);
+}
+
+/* --------------------------------------------------------------- readouts */
+
+.lamp {
+  @apply flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold;
+}
+.lamp-1 {
+  border-color: rgb(var(--sig-high));
+  background: rgb(var(--sig-high));
+  color: #fff;
+  box-shadow: 0 0 10px rgb(var(--sig-high) / 0.55);
+}
+.lamp-0 {
+  @apply border-bench-700 bg-bench-850 text-bench-500;
+}
+.lamp-x {
+  border-color: rgb(var(--warn) / 0.6);
+  background: rgb(var(--warn) / 0.12);
+  color: rgb(var(--warn));
+}
+
+table.tt {
+  @apply w-full border-collapse text-[11px];
+}
+table.tt th {
+  @apply border-b border-bench-700 px-2 py-1 text-left font-semibold text-bench-400;
+}
+table.tt td {
+  @apply border-b border-bench-800 px-2 py-1 font-mono text-bench-300;
+}
+table.tt tr:hover td {
+  @apply bg-bench-850;
+}
+
+.issue {
+  @apply flex gap-2 rounded-md border px-2.5 py-2 text-[12px] leading-snug;
+}
+.issue-error {
+  border-color: rgb(var(--err) / 0.4);
+  background: rgb(var(--err) / 0.08);
+  color: rgb(var(--err));
+}
+.issue-warn {
+  border-color: rgb(var(--warn) / 0.4);
+  background: rgb(var(--warn) / 0.08);
+  color: rgb(var(--warn));
+}
+.issue-ok {
+  border-color: rgb(var(--ok) / 0.35);
+  background: rgb(var(--ok) / 0.07);
+  color: rgb(var(--ok));
+}
+.issue-info {
+  border-color: rgb(var(--info) / 0.3);
+  background: rgb(var(--info) / 0.06);
+  color: rgb(var(--info));
+}
+
+.tab {
+  @apply relative shrink-0 px-3 py-2 text-[12px] font-medium text-bench-400 transition;
+}
+.tab:hover {
+  @apply text-bench-200;
+}
+.tab-on {
+  @apply text-bench-50;
+}
+.tab-on::after {
+  content: '';
+  @apply absolute inset-x-2 -bottom-px h-0.5 rounded-full bg-accent;
+}
+
+.prose-lab p {
+  @apply mb-2 text-[12.5px] leading-relaxed text-bench-300;
+}
+.prose-lab li {
+  @apply mb-1 text-[12.5px] leading-relaxed text-bench-300;
+}
+
+/* Hide the horizontal scrollbar on the toolbar / tab strips that scroll. */
+.no-bar {
+  scrollbar-width: none;
+}
+.no-bar::-webkit-scrollbar {
+  display: none;
+}
