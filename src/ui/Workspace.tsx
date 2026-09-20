@@ -22,8 +22,14 @@ interface Pending {
   from: PinRef;
   pts: Point[];
   cursor: Point;
-  /** Where the pointer went down, so a tap is told apart from a drag. */
-  downAt: Point;
+}
+
+/** A press that has not been decided yet - it may turn into a tap, a drag or a pinch. */
+interface Press {
+  x: number;
+  y: number;
+  world: Point;
+  pin: PinRef | null;
 }
 
 type DragState =
@@ -90,8 +96,8 @@ export function Workspace({
   const [hover, setHover] = useState<PinInfo | null>(null);
   const pointers = useRef(new Map<number, Point>());
   const [measured, setMeasured] = useState(false);
-  /** Set when a pointerdown already laid the wire, so pointerup does not repeat it. */
-  const wiredOnDown = useRef(false);
+  /** The press in progress in wire mode, decided when the finger lifts. */
+  const tapRef = useRef<Press | null>(null);
   /** Always the current drawing, so routing does not pin an old copy in a closure. */
   const circuitRef = useRef(circuit);
   circuitRef.current = circuit;
@@ -306,6 +312,10 @@ export function Workspace({
         vx: view.x,
         vy: view.y,
       };
+      // A second finger means the first was never a tap. Whatever it landed
+      // on, it was reaching for the zoom. A half-drawn wire is left alone -
+      // pinching in to find the far pin is exactly what you do next.
+      tapRef.current = null;
       setDrag(null);
       return;
     }
@@ -328,38 +338,19 @@ export function Workspace({
     // Wiring is a mode of its own. A breadboard is nothing but pins, so if any
     // touch on one started a wire there would be no way to move the view or
     // pick anything up.
+    //
+    // Nothing is committed here, only remembered: the first finger of a pinch
+    // arrives as an ordinary pointerdown, and until it lifts there is no way
+    // to tell a tap on a pin from the start of a two-finger zoom.
     if (tool === 'wire' || pending) {
       const pin = pinAt(world);
-      if (pin) {
-        if (pending) {
-          if (pending.from.c === pin.compId && pending.from.p === pin.pin) return;
-          lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
-          setPending(null);
-          // The matching pointerup still has the old pending in its closure -
-          // React has not flushed yet - so it must not lay the wire a second
-          // time. That is what put two wires on every tap-to-wire.
-          wiredOnDown.current = true;
-        } else {
-          setPending({
-            from: { c: pin.compId, p: pin.pin },
-            pts: [],
-            cursor: world,
-            downAt: { x: e.clientX, y: e.clientY },
-          });
-          wiredOnDown.current = false;
-        }
-        return;
-      }
-      if (pending) {
-        // A click on empty space puts a corner in - but only when the student
-        // is routing by hand. With Tidy wires on the path is not theirs to
-        // place, and a stray tap must not bend the wire.
-        if (circuit.settings.autoRoute === false) {
-          setPending({
-            ...pending,
-            pts: [...pending.pts, { x: Math.round(world.x), y: Math.round(world.y) }],
-          });
-        }
+      if (pin || pending) {
+        tapRef.current = {
+          x: e.clientX,
+          y: e.clientY,
+          world,
+          pin: pin ? { c: pin.compId, p: pin.pin } : null,
+        };
         return;
       }
     }
@@ -456,7 +447,22 @@ export function Workspace({
       return;
     }
 
-    if (pending) setPending({ ...pending, cursor: world });
+    // An undecided press that starts moving declares itself: from a pin it is
+    // a wire drawn by dragging, from bare bench it is a pan - which is how you
+    // shift the view mid-wire without a second finger.
+    const press = tapRef.current;
+    if (press && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 8) {
+      if (press.pin && !pending) {
+        setPending({ from: press.pin, pts: [], cursor: world });
+      } else if (!press.pin) {
+        tapRef.current = null;
+        setDrag({ kind: 'pan', startX: press.x, startY: press.y, ox: view.x, oy: view.y });
+        return;
+      }
+    } else if (pending) {
+      setPending({ ...pending, cursor: world });
+    }
+
     const pin = pinAt(world);
     if (pin?.key !== hover?.key) setHover(pin);
   };
@@ -513,18 +519,46 @@ export function Workspace({
       return;
     }
 
-    // Finish a wire that was drawn by *dragging* from one pin to another. A
-    // tap is finished on the next pointerdown instead, so a stationary release
-    // must be left alone.
-    if (pending && e.button === 0 && !wiredOnDown.current) {
-      const dragged = Math.hypot(e.clientX - pending.downAt.x, e.clientY - pending.downAt.y) > 8;
-      const pin = dragged ? pinAt(toWorld(e.clientX, e.clientY)) : null;
-      if (pin && !(pin.compId === pending.from.c && pin.pin === pending.from.p)) {
-        lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
-        setPending(null);
+    // Wiring is decided here, on the lift. A press that turned into a pinch
+    // had its record torn up when the second finger landed, so it does
+    // nothing at all - which is the whole point.
+    const press = tapRef.current;
+    tapRef.current = null;
+    if (press && e.button === 0) {
+      const world = toWorld(e.clientX, e.clientY);
+      const dragged = Math.hypot(e.clientX - press.x, e.clientY - press.y) > 8;
+      // A tap ends on the pin it began on; a drag ends wherever it let go.
+      const landed = dragged ? pinAt(world) : null;
+      const target: PinRef | null = dragged
+        ? landed
+          ? { c: landed.compId, p: landed.pin }
+          : null
+        : press.pin;
+
+      if (pending) {
+        if (target && !(target.c === pending.from.c && target.p === pending.from.p)) {
+          lab.addWire(pending.from, target, pending.pts);
+          setPending(null);
+        } else if (!dragged && !target && circuit.settings.autoRoute === false) {
+          // A tap on bare bench puts a corner in - by hand only. With Tidy
+          // wires on the path is not the student's to place.
+          setPending({
+            ...pending,
+            pts: [...pending.pts, { x: Math.round(press.world.x), y: Math.round(press.world.y) }],
+          });
+        }
+      } else if (target) {
+        setPending({ from: target, pts: [], cursor: world });
       }
     }
-    wiredOnDown.current = false;
+    setDrag(null);
+  };
+
+  /** A cancelled pointer is not a gesture: forget it rather than acting on it. */
+  const onPointerCancel = (e: React.PointerEvent<SVGSVGElement>) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinchRef.current = null;
+    tapRef.current = null;
     setDrag(null);
   };
 
@@ -687,7 +721,7 @@ export function Workspace({
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerCancel={onPointerUp}
+        onPointerCancel={onPointerCancel}
         onContextMenu={(e) => {
           e.preventDefault();
           setPending(null);

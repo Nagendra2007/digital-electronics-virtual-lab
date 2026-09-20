@@ -170,6 +170,10 @@ The lab is usable on a phone, with the workspace prioritised:
   double-taps the page itself;
 - wiring is a mode - tap **Wire**, then tap a pin and tap another - with a
   Cancel button in place of the Esc key;
+- a wire is decided when the finger *lifts*, not when it lands, so pinching to
+  zoom in on the pin you are aiming at never wires whatever the first finger
+  happened to touch. A half-drawn wire survives the pinch, which is the whole
+  point of zooming in mid-wire;
 - the bench I/O panel starts collapsed on a phone and stacks the writer, reader
   and clock into one scrolling column when you open it.
 
