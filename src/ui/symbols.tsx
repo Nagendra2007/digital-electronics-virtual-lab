@@ -812,7 +812,7 @@ const BreadboardShape = memo(function BreadboardShape({ comp }: { comp: PlacedCo
       rx={1.6}
       fill={V.boardHole}
       stroke={V.boardHoleEdge}
-      strokeWidth={0.7}
+      strokeWidth={1}
     />
   );
 
@@ -826,7 +826,7 @@ const BreadboardShape = memo(function BreadboardShape({ comp }: { comp: PlacedCo
         rx={9}
         fill={V.boardBody}
         stroke={V.boardEdge}
-        strokeWidth={1.5}
+        strokeWidth={2}
       />
 
       {/* power rails */}

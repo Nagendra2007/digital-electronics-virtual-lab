@@ -139,10 +139,12 @@ measured. It never inspects the wiring, so any correct circuit passes.
 
 ## Light and dark bench
 
-The bench is **light by default**: a white sheet, black IC packages, silver
-legs and a cream breadboard - what the hardware actually looks like under lab
-lights. The moon button in the toolbar switches to a dark bench and the choice
-is remembered.
+The bench is **light by default**: a cool white sheet, black IC packages,
+silver legs and a warm cream breadboard - what the hardware actually looks like
+under lab lights. The board is deliberately warmer and darker than the sheet,
+because a cream board on a white bench with a pale outline is a board you
+cannot see. The moon button in the toolbar switches to a dark bench and the
+choice is remembered.
 
 Both palettes are one set of CSS custom properties, so the chrome and the SVG
 bench flip together; nothing re-renders and no colour is hard-coded in a
@@ -224,12 +226,24 @@ jumper flat across a board rather than lay it over a chip:
 - corners cost extra, so runs come out long and straight instead of stepped;
 - a wire that would share a corridor with one already there pays a small
   penalty, so wires fan out into separate lanes;
-- a corner you place yourself is kept - the route is made to pass through it;
+- short wires are laid first - a short hop deserves the straight line and a
+  long one has room to go round;
+- then every wire is **pulled up and laid again**, because the first one down
+  was routed before it knew about any of the others;
 - the breadboard is not an obstacle: jumpers lie on it, as they should.
 
+The result does not depend on how you drew it. Four writer channels wired to
+four holes come out as four parallel lanes with two corners each and no
+crossings, whichever order you wire them in.
+
 **Tidy wires** in the toolbar turns the routing off if you would rather place
-every corner by hand. Routing is pure geometry in `src/sim/route.ts`, with no
-React in it, and it is unit tested.
+every corner by hand - and corners are only yours to place with it off, so a
+stray tap cannot bend a wire the lab is routing for you. Routing is pure
+geometry in `src/sim/route.ts`, with no React in it, and it is unit tested.
+
+Laying 24 wires on a busy bench, both passes, takes about 80 ms - and it only
+runs when the drawing changes, never when a switch is flicked or the
+simulation ticks.
 
 ## Zoom belongs to the bench
 

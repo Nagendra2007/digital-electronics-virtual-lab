@@ -437,14 +437,17 @@ export function LabProvider({ children }: { children: ReactNode }) {
 
       addWire(a, b, pts = [], color = '#7dd3fc') {
         if (a.c === b.c && a.p === b.p) return false;
-        const exists = circuit.wires.some(
-          (w) =>
-            (w.a.c === a.c && w.a.p === a.p && w.b.c === b.c && w.b.p === b.p) ||
-            (w.a.c === b.c && w.a.p === b.p && w.b.c === a.c && w.b.p === a.p),
-        );
-        if (exists) return false;
+        const duplicate = (list: Circuit['wires']) =>
+          list.some(
+            (w) =>
+              (w.a.c === a.c && w.a.p === a.p && w.b.c === b.c && w.b.p === b.p) ||
+              (w.a.c === b.c && w.a.p === b.p && w.b.c === a.c && w.b.p === a.p),
+          );
+        if (duplicate(circuit.wires)) return false;
         commit((d) => {
-          d.wires.push({ id: wireId(), a, b, pts, color });
+          // Checked again against the draft: two calls in one batch both see
+          // the same stale `circuit`, and one wire is quite enough.
+          if (!duplicate(d.wires)) d.wires.push({ id: wireId(), a, b, pts, color });
         });
         return true;
       },

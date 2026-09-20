@@ -52,9 +52,10 @@
   --c-idle: #94a3b8;
   --c-accent: #0e7490;
 
+  /* A cool, neutral bench, so the warm board reads against it. */
   --sheet-bg: #fbfcfe;
   --sheet-tint-a: #eef3f9;
-  --sheet-tint-b: #f4f1ec;
+  --sheet-tint-b: #eef1f6;
   --sheet-grid: #ccd5e2;
 
   --ic-body: #222a35;
@@ -88,14 +89,16 @@
   --bar-display: #b45309;
 
   --lead: #8f9cad;
-  --board-body: #f2f1ee;
-  --board-edge: #cfd3d9;
-  --board-hole: #ffffff;
-  --board-hole-edge: #9aa3b0;
-  --board-channel: #e6e5e1;
-  --board-mark: #8892a2;
-  --board-plus: #d4293a;
-  --board-minus: #2563eb;
+  /* Proper breadboard cream. It has to be clearly warmer and darker than the
+     sheet, or the board vanishes into a white bench. */
+  --board-body: #e7e0d0;
+  --board-edge: #a89d87;
+  --board-hole: #fdfdfb;
+  --board-hole-edge: #7d7666;
+  --board-channel: #cfc6b2;
+  --board-mark: #6b6350;
+  --board-plus: #c62131;
+  --board-minus: #1d4ed8;
 
   --seg-off: #e3e6ea;
   --seg-bg: #1b2028;

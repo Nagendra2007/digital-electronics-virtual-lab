@@ -22,6 +22,8 @@ interface Pending {
   from: PinRef;
   pts: Point[];
   cursor: Point;
+  /** Where the pointer went down, so a tap is told apart from a drag. */
+  downAt: Point;
 }
 
 type DragState =
@@ -88,6 +90,11 @@ export function Workspace({
   const [hover, setHover] = useState<PinInfo | null>(null);
   const pointers = useRef(new Map<number, Point>());
   const [measured, setMeasured] = useState(false);
+  /** Set when a pointerdown already laid the wire, so pointerup does not repeat it. */
+  const wiredOnDown = useRef(false);
+  /** Always the current drawing, so routing does not pin an old copy in a closure. */
+  const circuitRef = useRef(circuit);
+  circuitRef.current = circuit;
   // Where the two fingers started, so a pinch can zoom and drag at once.
   const pinchRef = useRef<{
     dist: number;
@@ -151,14 +158,28 @@ export function Workspace({
    */
   const pinPos = useCallback(
     (ref: PinRef): { x: number; y: number; side: string; hole: boolean } | null => {
-      const comp = circuit.components.find((c) => c.id === ref.c);
+      const comp = circuitRef.current.components.find((c) => c.id === ref.c);
       const model = comp && getModel(comp.type);
       if (!comp || !model) return null;
       const p = pinWorldPos(model, comp, ref.p);
       if (!p) return null;
       return { ...p, hole: model.pins.find((d) => d.n === ref.p)?.kind === 'hole' };
     },
-    [circuit.components],
+    [],
+  );
+
+  /**
+   * What the routing actually depends on: where the parts are and what is
+   * wired to what. Flicking a switch changes a part's *properties*, which
+   * makes a new circuit object every time - and re-laying every wire because
+   * somebody toggled D0 would make the bench stutter.
+   */
+  const layoutKey = useMemo(
+    () =>
+      circuit.components.map((c) => `${c.id}~${c.type}~${c.x}~${c.y}~${c.rot}`).join('|') +
+      '#' +
+      circuit.wires.map((w) => `${w.id}~${w.a.c}.${w.a.p}>${w.b.c}.${w.b.p}~${w.pts.length}`).join('|'),
+    [circuit.components, circuit.wires],
   );
 
   /**
@@ -167,31 +188,70 @@ export function Workspace({
    * into separate lanes - which is what you would do with real jumpers.
    */
   const routes = useMemo(() => {
-    const auto = circuit.settings.autoRoute !== false;
-    const obstacles: Rect[] = circuit.components.flatMap((c) => {
+    const drawing = circuitRef.current;
+    const auto = drawing.settings.autoRoute !== false;
+    const obstacles: Rect[] = drawing.components.flatMap((c) => {
       const m = getModel(c.type);
       return !m || m.category === 'board' ? [] : [boundsOf(m, c)];
     });
-    const lanes = new Map<number, number>();
     const map = new Map<string, Point[]>();
 
-    for (const w of circuit.wires) {
+    const jobs = drawing.wires.flatMap((w) => {
       const a = pinPos(w.a);
       const b = pinPos(w.b);
-      if (!a || !b) continue;
+      return a && b ? [{ id: w.id, a, b, pts: w.pts }] : [];
+    });
+
+    // Hand-placed corners are the student's own routing, so they only apply
+    // when the automatic routing is off.
+    if (!auto) {
+      for (const j of jobs) {
+        const head = { x: j.a.x, y: j.a.y };
+        const tail = { x: j.b.x, y: j.b.y };
+        map.set(j.id, simplify(elbow([head, stubOut(j.a), ...j.pts, stubOut(j.b), tail])));
+      }
+      return map;
+    }
+
+    // Short wires first: a short hop deserves the straight line, and a long
+    // one has plenty of room to go round.
+    const span = (j: (typeof jobs)[number]) =>
+      Math.abs(j.a.x - j.b.x) + Math.abs(j.a.y - j.b.y);
+    const order = [...jobs].sort((p, q) => span(p) - span(q));
+
+    const lanes = new Map<number, number>();
+    const taken = new Map<string, number[]>();
+    const occupy = (cells: number[], by: number) => {
+      for (const c of cells) {
+        const n = (lanes.get(c) ?? 0) + by;
+        if (n > 0) lanes.set(c, n);
+        else lanes.delete(c);
+      }
+    };
+
+    const lay = (j: (typeof jobs)[number]) => {
       // The pins themselves are part of the route, so a wire leaves a package
       // the way the pin points instead of turning against it.
-      const path = [{ x: a.x, y: a.y }, stubOut(a), ...w.pts, stubOut(b), { x: b.x, y: b.y }];
-      if (!auto) {
-        map.set(w.id, simplify(elbow(path)));
-        continue;
-      }
+      const path = [{ x: j.a.x, y: j.a.y }, stubOut(j.a), stubOut(j.b), { x: j.b.x, y: j.b.y }];
       const r = routeWire(path, obstacles, { lanes });
-      for (const cell of r.cells) lanes.set(cell, (lanes.get(cell) ?? 0) + 1);
-      map.set(w.id, simplify(elbow(r.points)));
+      map.set(j.id, simplify(elbow(r.points)));
+      taken.set(j.id, r.cells);
+      occupy(r.cells, 1);
+    };
+
+    for (const j of order) lay(j);
+
+    // Second pass. The first wire down was laid before it knew about any of
+    // the others; pulling each one up and laying it again lets every wire
+    // route around the finished picture instead of a half-built one.
+    if (order.length > 1 && order.length <= 40) {
+      for (const j of order) {
+        occupy(taken.get(j.id) ?? [], -1);
+        lay(j);
+      }
     }
     return map;
-  }, [circuit.components, circuit.wires, circuit.settings.autoRoute, pinPos]);
+  }, [layoutKey, circuit.settings.autoRoute, pinPos]);
 
   const wireAt = useCallback(
     (p: Point): string | null => {
@@ -275,17 +335,31 @@ export function Workspace({
           if (pending.from.c === pin.compId && pending.from.p === pin.pin) return;
           lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
           setPending(null);
+          // The matching pointerup still has the old pending in its closure -
+          // React has not flushed yet - so it must not lay the wire a second
+          // time. That is what put two wires on every tap-to-wire.
+          wiredOnDown.current = true;
         } else {
-          setPending({ from: { c: pin.compId, p: pin.pin }, pts: [], cursor: world });
+          setPending({
+            from: { c: pin.compId, p: pin.pin },
+            pts: [],
+            cursor: world,
+            downAt: { x: e.clientX, y: e.clientY },
+          });
+          wiredOnDown.current = false;
         }
         return;
       }
       if (pending) {
-        // A click on empty space adds a corner to the wire being drawn.
-        setPending({
-          ...pending,
-          pts: [...pending.pts, { x: Math.round(world.x), y: Math.round(world.y) }],
-        });
+        // A click on empty space puts a corner in - but only when the student
+        // is routing by hand. With Tidy wires on the path is not theirs to
+        // place, and a stray tap must not bend the wire.
+        if (circuit.settings.autoRoute === false) {
+          setPending({
+            ...pending,
+            pts: [...pending.pts, { x: Math.round(world.x), y: Math.round(world.y) }],
+          });
+        }
         return;
       }
     }
@@ -439,20 +513,18 @@ export function Workspace({
       return;
     }
 
-    // Finish a wire that was drawn by dragging from one pin to another.
-    if (pending && e.button === 0) {
-      const world = toWorld(e.clientX, e.clientY);
-      const pin = pinAt(world);
+    // Finish a wire that was drawn by *dragging* from one pin to another. A
+    // tap is finished on the next pointerdown instead, so a stationary release
+    // must be left alone.
+    if (pending && e.button === 0 && !wiredOnDown.current) {
+      const dragged = Math.hypot(e.clientX - pending.downAt.x, e.clientY - pending.downAt.y) > 8;
+      const pin = dragged ? pinAt(toWorld(e.clientX, e.clientY)) : null;
       if (pin && !(pin.compId === pending.from.c && pin.pin === pending.from.p)) {
-        const moved =
-          Math.hypot(world.x - pending.cursor.x, world.y - pending.cursor.y) < 2 &&
-          pending.pts.length === 0;
-        if (!moved || true) {
-          lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
-          setPending(null);
-        }
+        lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
+        setPending(null);
       }
     }
+    wiredOnDown.current = false;
     setDrag(null);
   };
 
@@ -700,7 +772,11 @@ export function Workspace({
 
       {pending && (
         <div className="absolute bottom-3 left-1/2 flex max-w-[92%] -translate-x-1/2 items-center gap-2 rounded-full border border-accent/40 bg-bench-900 px-3 py-1.5 text-[11px] text-accent shadow-lg">
-          <span className="truncate">Drawing a wire - tap a pin to finish, tap the sheet for a corner</span>
+          <span className="truncate">
+            {circuit.settings.autoRoute === false
+              ? 'Drawing a wire - tap a pin to finish, tap the sheet for a corner'
+              : 'Drawing a wire - tap a pin to finish; the path sorts itself out'}
+          </span>
           <button
             className="btn btn-sm shrink-0"
             onPointerDown={(e) => {
