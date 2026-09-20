@@ -204,6 +204,9 @@ const DipShape = ({ comp, model, engine, hoverPin, wireMode }: ShapeProps) => {
         const left = p.side === 'L';
         const nameX = left ? l.bodyX + 7 : l.bodyX + l.bodyW - 7;
         const numX = left ? p.x + 3 : p.x - 3;
+        // Pin names run along the package, as they do on a real chip - but
+        // never upside down, which is what a half-turn would otherwise give.
+        const flip = comp.rot === 180 || comp.rot === 270;
         return (
           <g key={p.n}>
             <Upright rot={comp.rot} x={numX} y={p.y}>
@@ -215,7 +218,8 @@ const DipShape = ({ comp, model, engine, hoverPin, wireMode }: ShapeProps) => {
               className="pin-name"
               x={nameX}
               y={p.y + 3}
-              textAnchor={left ? 'start' : 'end'}
+              transform={flip ? `rotate(180 ${nameX} ${p.y})` : undefined}
+              textAnchor={left !== flip ? 'start' : 'end'}
               opacity={def.kind === 'nc' ? 0.45 : 1}
               fill={pinNameColor(def.kind)}
             >

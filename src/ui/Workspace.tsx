@@ -26,7 +26,9 @@ interface Pending {
 
 type DragState =
   | { kind: 'comp'; ids: string[]; startX: number; startY: number; dx: number; dy: number }
-  | { kind: 'pan'; startX: number; startY: number; ox: number; oy: number }
+  // `tap` is the part the pan started on: a drag moves the view, but letting
+  // go without moving picks that part up instead.
+  | { kind: 'pan'; startX: number; startY: number; ox: number; oy: number; tap?: string }
   | { kind: 'marquee'; x0: number; y0: number; x1: number; y1: number }
   | null;
 
@@ -249,8 +251,8 @@ export function Workspace({
     }
 
     const world = toWorld(e.clientX, e.clientY);
-    const startPan = () =>
-      setDrag({ kind: 'pan', startX: e.clientX, startY: e.clientY, ox: view.x, oy: view.y });
+    const startPan = (tap?: string) =>
+      setDrag({ kind: 'pan', startX: e.clientX, startY: e.clientY, ox: view.x, oy: view.y, tap });
 
     if (placing) {
       place(placing, world);
@@ -305,9 +307,10 @@ export function Workspace({
         return;
       }
       // On a touch screen the board covers the whole workspace, so dragging it
-      // has to move the view: otherwise the bench is a prison.
+      // has to move the view: otherwise the bench is a prison. A tap that does
+      // not move still selects it, which is how you get at Rotate.
       if (COARSE_POINTER && getModel(comp.type)?.category === 'board') {
-        startPan();
+        startPan(comp.id);
         return;
       }
       const already = lab.selection.includes(comp.id);
@@ -387,6 +390,16 @@ export function Workspace({
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
     pointers.current.delete(e.pointerId);
     if (pointers.current.size < 2) pinchRef.current = null;
+
+    if (drag?.kind === 'pan') {
+      const moved = Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY);
+      if (drag.tap && moved < 6) {
+        lab.setSelection([drag.tap]);
+        lab.setSelectedWires([]);
+      }
+      setDrag(null);
+      return;
+    }
 
     if (drag?.kind === 'comp') {
       if (drag.dx || drag.dy) {

@@ -4,10 +4,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Bench } from './helpers';
-import { ALL_MODELS, canRotate, getModel, normaliseBoards } from '../src/sim/registry';
-import { PIN_PITCH, layoutOf, pinWorldPos, seatsOnBoard } from '../src/sim/geometry';
-import { BB, BB_COLS, BB_ROWS, breadboard, holeX } from '../src/sim/breadboard';
-import { placementFor } from '../src/ui/placement';
+import { ALL_MODELS, getModel } from '../src/sim/registry';
+import { PIN_PITCH, boundsOf, layoutOf, pinWorldPos, seatsOnBoard } from '../src/sim/geometry';
+import { BB, BB_COLS, BB_ROWS, breadboard, holeCol, holeX } from '../src/sim/breadboard';
+import { placementFor, rotateBoard } from '../src/ui/placement';
 import type { PlacedComponent } from '../src/sim/types';
 
 /** Every hole of a board placed at the origin. */
@@ -25,6 +25,28 @@ function holePositions(): Set<string> {
   return out;
 }
 
+/** Every hole of a board, in world coordinates, whichever way it is turned. */
+function holesOfBoard(board: PlacedComponent): Set<string> {
+  const model = getModel('breadboard')!;
+  return new Set(
+    layoutOf(model, board).pins.map((p) => {
+      const w = pinWorldPos(model, board, p.n)!;
+      return `${Math.round(w.x)},${Math.round(w.y)}`;
+    }),
+  );
+}
+
+/** The board hole a given pin of a seated part is sitting in. */
+function holeUnder(board: PlacedComponent, comp: PlacedComponent, pin: number): number {
+  const boardModel = getModel('breadboard')!;
+  const pos = pinWorldPos(getModel(comp.type)!, comp, pin)!;
+  const hole = boardModel.pins.find((h) => {
+    const w = pinWorldPos(boardModel, board, h.n)!;
+    return Math.round(w.x) === Math.round(pos.x) && Math.round(w.y) === Math.round(pos.y);
+  });
+  return hole!.n;
+}
+
 describe('the board itself', () => {
   it('is a full-size board: 60 columns, 840 tie points', () => {
     expect(BB_COLS).toBe(60);
@@ -32,21 +54,99 @@ describe('the board itself', () => {
     expect(breadboard.pins).toHaveLength(840);
   });
 
-  it('does not rotate, because everything is placed against its hole grid', () => {
-    expect(canRotate(breadboard)).toBe(false);
-    expect(canRotate(getModel('ic:7408')!)).toBe(true);
+  it('takes a package whichever way the board is turned', () => {
+    for (const rot of [0, 90, 180, 270] as const) {
+      const b = new Bench();
+      const board = b.add('breadboard');
+      b.comp(board).x = 0;
+      b.comp(board).y = 0;
+      b.comp(board).rot = rot;
+
+      const boardModel = getModel('breadboard')!;
+      const holes = holesOfBoard(b.comp(board));
+      const box = boundsOf(boardModel, b.comp(board));
+
+      const model = getModel('ic:7408')!;
+      const id = b.add(model.type);
+      const spot = placementFor(b.circuit, model, box.x + box.w / 2, box.y + box.h / 2, 0, id);
+      const comp = b.comp(id);
+      comp.x = spot.x;
+      comp.y = spot.y;
+      comp.rot = spot.rot;
+      b.engine.rebuild(b.circuit);
+
+      expect(spot.rot, `board at ${rot}: the package must lie across the channel`).toBe(
+        (90 + rot) % 360,
+      );
+      for (const p of model.pins) {
+        const pos = pinWorldPos(model, comp, p.n)!;
+        expect(
+          holes.has(`${Math.round(pos.x)},${Math.round(pos.y)}`),
+          `board at ${rot}: pin ${p.n} landed at ${Math.round(pos.x)},${Math.round(pos.y)} - not a hole`,
+        ).toBe(true);
+      }
+    }
   });
 
-  it('puts a board back flat when an older saved bench had it turned', () => {
+  it('wires a turned board up exactly like a flat one', () => {
     const b = new Bench();
     const board = b.add('breadboard');
+    b.comp(board).x = 0;
+    b.comp(board).y = 0;
     b.comp(board).rot = 90;
-    const ic = b.add('ic:7408');
-    b.comp(ic).rot = 90;
 
-    normaliseBoards(b.circuit);
-    expect(b.comp(board).rot).toBe(0);
-    expect(b.comp(ic).rot, 'only boards are flattened').toBe(90);
+    const model = getModel('ic:7408')!;
+    const box = boundsOf(getModel('breadboard')!, b.comp(board));
+    const ic = b.add(model.type);
+    const spot = placementFor(b.circuit, model, box.x + box.w / 2, box.y + box.h / 2, 0, ic);
+    Object.assign(b.comp(ic), spot);
+
+    // Power it through the hole grid, not by wiring the IC pins directly.
+    const vccCol = holeCol(holeUnder(b.comp(board), b.comp(ic), 14));
+    const gndCol = holeCol(holeUnder(b.comp(board), b.comp(ic), 7));
+    b.wire(board, BB.bankBottom(4, vccCol), b.vcc, 1);
+    b.wire(board, BB.bankTop(0, gndCol), b.gnd, 1);
+    b.engine.rebuild(b.circuit);
+    b.run(2);
+
+    expect(b.read(ic, 14), 'VCC reaches the package through the strips').toBe(1);
+    expect(b.read(ic, 7), 'GND reaches the package through the strips').toBe(0);
+  });
+
+  it('carries everything plugged in when it is turned', () => {
+    const b = new Bench();
+    const board = b.add('breadboard');
+    b.comp(board).x = 0;
+    b.comp(board).y = 0;
+
+    const model = getModel('ic:7408')!;
+    const ic = b.add(model.type);
+    Object.assign(b.comp(ic), placementFor(b.circuit, model, 300, 260, 0, ic));
+    b.engine.rebuild(b.circuit);
+
+    b.wire(board, BB.bankBottom(4, holeCol(holeUnder(b.comp(board), b.comp(ic), 14))), b.vcc, 1);
+    b.wire(board, BB.bankTop(0, holeCol(holeUnder(b.comp(board), b.comp(ic), 7))), b.gnd, 1);
+    b.engine.rebuild(b.circuit);
+    b.run(2);
+    expect(b.read(ic, 14), 'powered before the board is turned').toBe(1);
+
+    rotateBoard(b.circuit, board);
+    b.engine.rebuild(b.circuit);
+    b.run(2);
+
+    expect(b.comp(board).rot).toBe(90);
+    expect(b.comp(ic).rot, 'the package turns with the board').toBe(180);
+
+    const holes = holesOfBoard(b.comp(board));
+    for (const p of model.pins) {
+      const pos = pinWorldPos(model, b.comp(ic), p.n)!;
+      expect(
+        holes.has(`${Math.round(pos.x)},${Math.round(pos.y)}`),
+        `pin ${p.n} fell out of the board when it turned`,
+      ).toBe(true);
+    }
+    expect(b.read(ic, 14), 'still powered after the board turned').toBe(1);
+    expect(b.read(ic, 7), 'still grounded after the board turned').toBe(0);
   });
 });
 

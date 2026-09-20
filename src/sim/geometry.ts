@@ -195,6 +195,37 @@ export function toWorld(
   }
 }
 
+/** Where a part's pins sit relative to its own origin, at a given rotation. */
+export function pinOffsets(
+  model: ComponentModel,
+  rot: PlacedComponent['rot'],
+): { x: number; y: number }[] {
+  const probe: PlacedComponent = { id: '_', type: model.type, x: 0, y: 0, rot, props: {} };
+  const l = layoutOf(model, probe);
+  return l.pins.map((p) => toWorld(probe, l, p.x, p.y));
+}
+
+/** Map a workspace point back into the component's own frame: inverse of `toWorld`. */
+export function toLocal(
+  comp: PlacedComponent,
+  l: Layout,
+  x: number,
+  y: number,
+): { x: number; y: number } {
+  const dx = x - comp.x;
+  const dy = y - comp.y;
+  switch (comp.rot) {
+    case 90:
+      return { x: dy, y: l.h - dx };
+    case 180:
+      return { x: l.w - dx, y: l.h - dy };
+    case 270:
+      return { x: l.w - dy, y: dx };
+    default:
+      return { x: dx, y: dy };
+  }
+}
+
 /** The SVG transform that puts a component's own frame at the right place. */
 export function transformOf(comp: PlacedComponent, l: Layout): string {
   const t =

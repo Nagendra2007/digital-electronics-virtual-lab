@@ -28,7 +28,7 @@ Then open http://localhost:5180.
 | `npm run dev` | dev server with hot reload |
 | `npm run build` | type-check and produce `dist/` |
 | `npm run preview` | serve the production build |
-| `npm test` | run the simulation test suite (100 tests) |
+| `npm test` | run the simulation test suite (101 tests) |
 | `npm run typecheck` | TypeScript only |
 
 The app is fully static once built: `dist/` can be dropped on any web host.
@@ -158,6 +158,10 @@ The lab is usable on a phone, with the workspace prioritised:
   Parts drawer closes itself once a part is on the bench;
 - one finger drags the bench around and two fingers pinch it bigger; the whole
   bench is framed on load, so pinch in on the part of the board you are using;
+- turn the board upright and it runs down the screen with the panels either
+  side of it, which is the layout a portrait phone actually wants: tap the
+  board to select it, then Rotate, which appears in the toolbar next to Run
+  whenever something is selected;
 - the inspector stays shut on anything narrower than a wide desktop, so the
   bench gets the room instead;
 - pin targets and buttons grow on touch screens, and nothing pinches or
@@ -179,10 +183,14 @@ The board is a full-size one: **60 columns, 840 tie points**, at the same hole
 pitch and the same proportions as the board on a lab desk. That is eight
 14-pin packages in a row with a spare column between each for jumpers.
 
-The board does not rotate. Every part placed on it is seated against its hole
-grid, so turning the board would leave nothing able to find a hole - you move
-around a real breadboard rather than turning it. A board turned in an older
-saved bench is put back flat when the bench loads.
+**The board turns.** Rotate it and a long board stands upright, which is the
+only way a 60-column board is any use on a phone. Seating works from the holes'
+own positions rather than from column arithmetic, so a package still lands with
+every leg in a hole whichever of the four ways round the board is. Turning a
+board carries everything plugged into it round with it - the legs stay in the
+same holes, so a circuit half-built survives - and the two trainer panels move
+to stay beside it instead of being left spread out where the flat board had
+them.
 
 Parts really do fit. Every pin of every part sits on the 0.1 inch hole pitch,
 and a part is only seated where **all** of its legs land in holes - so a
@@ -258,7 +266,7 @@ src/
   data/experiments.ts   the twenty practicals
   store/lab.tsx         circuit state, undo/redo, simulation loop
   ui/                   toolbar, library, workspace, inspector, bench, panels
-test/                   100 tests over the engine, the library, placement, routing
+test/                   101 tests over the engine, the library, placement, routing
 ```
 
 Adding an IC means adding one entry to a file in `src/sim/ics/` — pins,
@@ -284,8 +292,10 @@ npm test
 - the experiment checker: a correctly built half adder, full adder, SR latch,
   D flip-flop, counter, shift register and demultiplexer pass, and
   deliberately miswired versions fail
-- the board itself: 60 columns and 840 tie points, it refuses to rotate, and a
-  board turned in an older saved bench is put back flat on load
+- the board itself: 60 columns and 840 tie points; a package seats with every
+  leg in a hole with the board at each of the four rotations; a turned board is
+  wired up through its strips exactly like a flat one; and turning a board
+  carries a seated package round with it, still powered afterwards
 - breadboard fit: every DIP and every seatable module lands with all of its
   legs in holes, a second DIP shifts clear of the first, and a part dropped
   away from the board is left where it was put

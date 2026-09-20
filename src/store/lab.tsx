@@ -17,10 +17,11 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 import { CircuitEngine } from '../sim/engine';
-import { canRotate, createComponent, getModel, newCircuit, nextDesignator } from '../sim/registry';
+import { createComponent, getModel, newCircuit, nextDesignator } from '../sim/registry';
 import { boundsOf } from '../sim/geometry';
 import { validate } from '../sim/validate';
 import { loadBench, saveBench } from '../sim/storage';
+import { rotateBoard } from '../ui/placement';
 import type { Circuit, CircuitSettings, NetValue, PinRef, PlacedComponent } from '../sim/types';
 import type { Issue } from '../sim/validate';
 import type { Experiment } from '../data/experiments';
@@ -117,7 +118,7 @@ export interface LabApi {
   setActiveExperiment(e: Experiment | null): void;
 }
 
-export const ZOOM_MIN = 0.25;
+export const ZOOM_MIN = 0.2;
 export const ZOOM_MAX = 3;
 /** Fitting never blows a lone part up past this. */
 const ZOOM_FIT_MAX = 1.8;
@@ -380,14 +381,19 @@ export function LabProvider({ children }: { children: ReactNode }) {
 
       rotateSelection() {
         if (!selection.length) return;
+        const turnedBoard = circuit.components.some(
+          (c) => selection.includes(c.id) && getModel(c.type)?.category === 'board',
+        );
         commit((d) => {
           for (const c of d.components) {
             if (!selection.includes(c.id)) continue;
-            const model = getModel(c.type);
-            if (model && !canRotate(model)) continue;
-            c.rot = ((c.rot + 90) % 360) as PlacedComponent['rot'];
+            // A board takes everything plugged into it round with it.
+            if (getModel(c.type)?.category === 'board') rotateBoard(d, c.id);
+            else c.rot = ((c.rot + 90) % 360) as PlacedComponent['rot'];
           }
         });
+        // A turned board changes shape completely: bring it back into view.
+        if (turnedBoard) setFitRequest((v) => v + 1);
       },
 
       duplicateSelection() {

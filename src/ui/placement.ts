@@ -1,94 +1,85 @@
 /**
  * Dropping parts onto the bench, and onto a breadboard the way a real one
- * behaves: a DIP straddles the centre channel with a leg in every hole, and
- * anything else lands with its pins seated on the hole grid.
+ * behaves: a package straddles the centre channel with a leg in every hole,
+ * and anything else lands with its pins seated on the hole grid.
+ *
+ * Everything here works from the holes' *world* positions rather than from
+ * column arithmetic, so it keeps working when the board itself is turned -
+ * which is how you make a long board fit down a phone screen.
  */
-import { BB_COLS, BB_H, BB_ROWS, BB_W, holeX } from '../sim/breadboard';
-import { PIN_PITCH, boundsOf, layoutOf, snapTo, toWorld } from '../sim/geometry';
+import { BB_H, BB_ROWS, BB_W, holeX } from '../sim/breadboard';
+import {
+  PIN_PITCH,
+  boundsOf,
+  layoutOf,
+  pinOffsets,
+  snapTo,
+  toLocal,
+  toWorld,
+} from '../sim/geometry';
 import { getModel } from '../sim/registry';
 import type { Circuit, ComponentModel, PlacedComponent } from '../sim/types';
+
+type Point = { x: number; y: number };
+type Box = { x: number; y: number; w: number; h: number };
 
 export function findBoard(circuit: Circuit): PlacedComponent | undefined {
   return circuit.components.find((c) => c.type === 'breadboard');
 }
 
+/** True when a point is over the board, whichever way the board is turned. */
 export function isOverBoard(board: PlacedComponent, x: number, y: number): boolean {
-  return (
-    x >= board.x - 20 && x <= board.x + BB_W + 20 && y >= board.y - 20 && y <= board.y + BB_H + 20
-  );
+  const model = getModel(board.type);
+  if (!model) return false;
+  const p = toLocal(board, layoutOf(model, board), x, y);
+  return p.x >= -20 && p.x <= BB_W + 20 && p.y >= -20 && p.y <= BB_H + 20;
 }
 
-/** The y a DIP must sit at so its two rows of legs land in rows E and F. */
-const dipRowY = (board: PlacedComponent) => board.y + BB_ROWS.bankTop + 4 * PIN_PITCH;
+/**
+ * Every hole of the board in workspace coordinates. Recomputing 840 of these
+ * on every drop is cheap, but the board rarely moves, so one is kept.
+ */
+let holeCache: { key: string; pts: Point[]; keys: Set<string> } | null = null;
 
-/** Every hole position on a board, as `x,y` offsets from the board origin. */
-function holeSet(): Set<string> {
-  if (!holeCache) {
-    holeCache = new Set<string>();
-    for (let c = 0; c < BB_COLS; c++) {
-      for (const y of holeYs()) holeCache.add(`${holeX(c)},${y}`);
-    }
-  }
+function holesOf(board: PlacedComponent): { pts: Point[]; keys: Set<string> } {
+  const key = `${board.type}:${board.x}:${board.y}:${board.rot}`;
+  if (holeCache?.key === key) return holeCache;
+  const model = getModel(board.type);
+  if (!model) return { pts: [], keys: new Set() };
+  const l = layoutOf(model, board);
+  const pts = l.pins.map((p) => toWorld(board, l, p.x, p.y));
+  const keys = new Set(pts.map((p) => `${Math.round(p.x)},${Math.round(p.y)}`));
+  holeCache = { key, pts, keys };
   return holeCache;
 }
-let holeCache: Set<string> | null = null;
 
-/** Every hole row of a board, as an offset from the board origin. */
-function holeYs(): number[] {
-  const ys = [BB_ROWS.railTopPlus, BB_ROWS.railTopMinus, BB_ROWS.railBotPlus, BB_ROWS.railBotMinus];
-  for (let r = 0; r < 5; r++) {
-    ys.push(BB_ROWS.bankTop + r * PIN_PITCH);
-    ys.push(BB_ROWS.bankBottom + r * PIN_PITCH);
-  }
-  return ys;
+/**
+ * Which way up a part has to be to seat. A package lies across the centre
+ * channel, so it is always square to the board however the board is turned;
+ * anything else keeps the way it is, or follows the board if that will not sit.
+ */
+function seatingRotations(
+  model: ComponentModel,
+  board: PlacedComponent,
+  rot: PlacedComponent['rot'],
+): PlacedComponent['rot'][] {
+  const turn = (a: number) => ((a + 360) % 360) as PlacedComponent['rot'];
+  if (model.pkg !== 'module') return [turn(90 + board.rot)];
+  const withBoard = turn(rot + board.rot);
+  return withBoard === rot ? [rot] : [rot, withBoard];
 }
 
-/** Offset from a part's origin to its left-most / top-most pin, after rotation. */
-function pinExtent(model: ComponentModel, rot: PlacedComponent['rot']) {
-  const probe: PlacedComponent = { id: '_', type: model.type, x: 0, y: 0, rot, props: {} };
-  const l = layoutOf(model, probe);
-  const pts = l.pins.map((p) => toWorld(probe, l, p.x, p.y));
-  return {
-    minX: Math.min(...pts.map((p) => p.x)),
-    minY: Math.min(...pts.map((p) => p.y)),
-    cols: new Set(pts.map((p) => Math.round(p.x))).size,
-  };
+/** Bounding boxes of everything else on the bench that a part could land on. */
+function otherBoxes(circuit: Circuit, exclude?: string): Box[] {
+  return circuit.components.flatMap((c) => {
+    if (c.id === exclude) return [];
+    const model = getModel(c.type);
+    return !model || model.category === 'board' ? [] : [boundsOf(model, c)];
+  });
 }
 
-/** Columns already taken by DIPs seated across the channel. */
-function occupiedColumns(circuit: Circuit, board: PlacedComponent, exclude?: string): Set<number> {
-  const taken = new Set<number>();
-  const rowY = dipRowY(board);
-  for (const comp of circuit.components) {
-    if (comp.id === exclude || comp.id === board.id) continue;
-    const model = getModel(comp.type);
-    if (!model || model.pkg === 'module') continue;
-    if (comp.rot !== 90 || Math.abs(comp.y - rowY) > 1) continue;
-    const { minX, cols } = pinExtent(model, 90);
-    const first = Math.round((comp.x + minX - board.x - holeX(0)) / PIN_PITCH);
-    // One spare column each side: that is the room you need to get a jumper
-    // into the end pins, and it keeps two packages from looking like one.
-    for (let i = -1; i <= cols; i++) taken.add(first + i);
-  }
-  return taken;
-}
-
-/** Nearest run of `width` free columns to `want`, or `want` if the board is full. */
-function freeRun(taken: Set<number>, want: number, width: number): number {
-  const max = BB_COLS - width;
-  const fits = (c: number) => {
-    if (c < 0 || c > max) return false;
-    for (let i = 0; i < width; i++) if (taken.has(c + i)) return false;
-    return true;
-  };
-  const start = Math.max(0, Math.min(max, want));
-  if (fits(start)) return start;
-  for (let d = 1; d <= BB_COLS; d++) {
-    if (fits(start + d)) return start + d;
-    if (fits(start - d)) return start - d;
-  }
-  return start;
-}
+const overlaps = (a: Box, b: Box) =>
+  a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
 /**
  * Where a part should sit when it is dropped at (x, y) - which is the position
@@ -114,59 +105,119 @@ export function placementFor(
   // Trainer panels stand beside the board rather than plugging into it.
   if (model.category === 'board' || model.boardMountable === false || !board) return loose();
 
-  // A DIP straddles the centre channel: legs in row E and row F.
-  if (model.pkg !== 'module') {
-    const { minX, cols } = pinExtent(model, 90);
-    if (!isOverBoard(board, x + minX, y)) return loose();
-    const want = Math.round((x + minX - board.x - holeX(0)) / PIN_PITCH);
-    const col = freeRun(occupiedColumns(circuit, board, movingId), want, cols);
-    return { x: board.x + holeX(col) - minX, y: dipRowY(board), rot: 90 };
-  }
+  const { pts, keys } = holesOf(board);
+  const others = otherBoxes(circuit, movingId);
+  let best: { x: number; y: number; rot: PlacedComponent['rot']; d: number } | null = null;
 
-  // Everything else: find the nearest seating where EVERY leg lands in a hole.
-  // Checking the whole footprint is what stops a part hanging half off a bank.
-  const probe: PlacedComponent = { id: '_', type: model.type, x: 0, y: 0, rot, props: {} };
-  const l = layoutOf(model, probe);
-  const offsets = l.pins.map((p) => toWorld(probe, l, p.x, p.y));
-  if (!offsets.length) return loose();
+  for (const r of seatingRotations(model, board, rot)) {
+    const offsets = pinOffsets(model, r);
+    if (!offsets.length) continue;
+    const first = offsets[0];
+    const target = { x: x + first.x, y: y + first.y };
+    if (!isOverBoard(board, target.x, target.y)) continue;
 
-  const first = offsets[0];
-  const targetX = x + first.x;
-  const targetY = y + first.y;
-  if (!isOverBoard(board, targetX, targetY)) return loose();
-
-  const holes = holeSet();
-  let best: { x: number; y: number; d: number } | null = null;
-  for (let c = 0; c < BB_COLS; c++) {
-    for (const hy of holeYs()) {
-      const hx = holeX(c);
-      // Anchor the first pin here, then check the rest of the legs.
-      const ox = hx - first.x;
-      const oy = hy - first.y;
-      if (!offsets.every((p) => holes.has(`${Math.round(ox + p.x)},${Math.round(oy + p.y)}`))) {
+    // Anchor the first pin on each hole in turn and keep the nearest seating
+    // where EVERY leg lands in a hole and nothing is already in the way.
+    for (const hole of pts) {
+      const ox = hole.x - first.x;
+      const oy = hole.y - first.y;
+      const d = Math.hypot(hole.x - target.x, hole.y - target.y);
+      if (best && d >= best.d) continue;
+      if (!offsets.every((p) => keys.has(`${Math.round(ox + p.x)},${Math.round(oy + p.y)}`))) {
         continue;
       }
-      const d = Math.hypot(board.x + hx - targetX, board.y + hy - targetY);
-      if (!best || d < best.d) best = { x: board.x + ox, y: board.y + oy, d };
+      const box = boundsOf(model, { id: '_', type: model.type, x: ox, y: oy, rot: r, props: {} });
+      if (others.some((b) => overlaps(b, box))) continue;
+      best = { x: ox, y: oy, rot: r, d };
     }
   }
 
-  // Nowhere on the board takes every leg: leave it standing beside the board.
-  return best ? { x: best.x, y: best.y, rot } : loose();
+  // Nowhere on the board takes every leg: leave it standing where it was put.
+  return best ? { x: best.x, y: best.y, rot: best.rot } : loose();
+}
+
+/** Parts with every leg sitting in a hole of this board. */
+export function seatedOn(circuit: Circuit, board: PlacedComponent): PlacedComponent[] {
+  const { keys } = holesOf(board);
+  return circuit.components.filter((c) => {
+    const model = c.id === board.id ? null : getModel(c.type);
+    if (!model || model.category === 'board') return false;
+    const offsets = pinOffsets(model, c.rot);
+    return (
+      offsets.length > 0 &&
+      offsets.every((p) => keys.has(`${Math.round(c.x + p.x)},${Math.round(c.y + p.y)}`))
+    );
+  });
+}
+
+/**
+ * Turn a board a quarter turn, carrying everything plugged into it round with
+ * it. Every leg stays in the hole it was in, so the circuit survives - which is
+ * not what happens if you turn a real board, but it is what you meant.
+ */
+export function rotateBoard(circuit: Circuit, boardId: string): void {
+  const board = circuit.components.find((c) => c.id === boardId);
+  const model = board && getModel(board.type);
+  if (!board || !model) return;
+  const l = layoutOf(model, board);
+  const before = boundsOf(model, board);
+
+  // Anchor each passenger by its first pin, in the board's own frame.
+  const riders = seatedOn(circuit, board).map((comp) => {
+    const first = pinOffsets(getModel(comp.type)!, comp.rot)[0];
+    return {
+      comp,
+      local: toLocal(board, l, comp.x + first.x, comp.y + first.y),
+      rot: (((comp.rot - board.rot) % 360) + 360) % 360,
+    };
+  });
+
+  board.rot = ((board.rot + 90) % 360) as PlacedComponent['rot'];
+
+  for (const rider of riders) {
+    const rot = ((rider.rot + board.rot) % 360) as PlacedComponent['rot'];
+    const anchor = toWorld(board, l, rider.local.x, rider.local.y);
+    const first = pinOffsets(getModel(rider.comp.type)!, rot)[0];
+    rider.comp.rot = rot;
+    rider.comp.x = Math.round(anchor.x - first.x);
+    rider.comp.y = Math.round(anchor.y - first.y);
+  }
+
+  // The trainer panels have nowhere else to live, so they stay beside the
+  // board and keep the side they were on. A board stood upright to suit a
+  // phone is no use if the panels stay spread out where the flat one left them.
+  const after = boundsOf(model, board);
+  const midBefore = before.x + before.w / 2;
+  for (const panel of circuit.components) {
+    const pm = getModel(panel.type);
+    if (pm?.boardMountable !== false) continue;
+    const box = boundsOf(pm, panel);
+    const wasLeft = box.x + box.w / 2 < midBefore;
+    panel.x = Math.round(wasLeft ? after.x - box.w - 30 : after.x + after.w + 30);
+    panel.y = Math.round(after.y + (after.h - box.h) / 2);
+  }
 }
 
 /**
  * Somewhere sensible to drop a part when the student clicks it in the library:
- * clear of everything already on the bench, and near the board when there is
- * one, so a new package lands where it is about to be used.
+ * clear of everything already on the bench, and on the board when there is one,
+ * because that is where a package is about to be used.
  */
-export function freeSpot(circuit: Circuit, model?: ComponentModel): { x: number; y: number } {
+export function freeSpot(circuit: Circuit, model?: ComponentModel): Point {
   const board = findBoard(circuit);
+  const boardModel = board && getModel(board.type);
 
-  // A package belongs in the board. Aim at the first column and let the
-  // seating code slide it along to the first free run.
-  if (board && model && model.pkg !== 'module') {
-    return { x: board.x, y: dipRowY(board) };
+  // A package belongs in the board. Aim its first pin at the start of row E
+  // and let the seating search slide it along to the first free run.
+  if (board && boardModel && model && model.pkg !== 'module') {
+    const aim = toWorld(
+      board,
+      layoutOf(boardModel, board),
+      holeX(0),
+      BB_ROWS.bankTop + 4 * PIN_PITCH,
+    );
+    const first = pinOffsets(model, seatingRotations(model, board, 0)[0])[0];
+    return first ? { x: aim.x - first.x, y: aim.y - first.y } : aim;
   }
 
   const size = model
@@ -177,19 +228,17 @@ export function freeSpot(circuit: Circuit, model?: ComponentModel): { x: number;
 
   // Parts sitting on a board are not in the way of anything, so the board
   // itself does not count as occupied space.
-  const taken = circuit.components.flatMap((c) => {
-    const m = getModel(c.type);
-    return !m || m.category === 'board' ? [] : [boundsOf(m, c)];
-  });
+  const taken = otherBoxes(circuit);
 
-  const home = board
-    ? { x: board.x + 40, y: board.y + BB_ROWS.bankBottom }
-    : { x: taken.length ? Math.min(...taken.map((b) => b.x)) + 260 : 300, y: 160 };
+  const home =
+    board && boardModel
+      ? toWorld(board, layoutOf(boardModel, board), 40, BB_ROWS.bankBottom)
+      : { x: taken.length ? Math.min(...taken.map((b) => b.x)) + 260 : 300, y: 160 };
 
   const clear = (x: number, y: number) =>
     y > 0 &&
-    !taken.some(
-      (b) => x < b.x + b.w + 24 && x + w + 24 > b.x && y < b.y + b.h + 24 && y + h + 24 > b.y,
+    !taken.some((b) =>
+      overlaps(b, { x: x - 24, y: y - 24, w: w + 48, h: h + 48 }),
     );
 
   const step = 40;

@@ -275,6 +275,19 @@ export function Toolbar({
             </button>
           ))}
         </div>
+        {/* Rotate matters most for the board, which is too big to work with
+            sideways on a phone - so it appears here as soon as anything is
+            selected rather than living in the strip that scrolls away. */}
+        {lab.selection.length > 0 && (
+          <button
+            className="btn btn-sm sm:hidden"
+            onClick={lab.rotateSelection}
+            title="Rotate the selection (R)"
+            aria-label="Rotate"
+          >
+            {'↻'}
+          </button>
+        )}
         <button
           className="btn btn-sm"
           onClick={onToggleTheme}
