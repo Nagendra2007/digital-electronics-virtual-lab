@@ -28,7 +28,7 @@ Then open http://localhost:5180.
 | `npm run dev` | dev server with hot reload |
 | `npm run build` | type-check and produce `dist/` |
 | `npm run preview` | serve the production build |
-| `npm test` | run the simulation test suite (101 tests) |
+| `npm test` | run the simulation test suite (103 tests) |
 | `npm run typecheck` | TypeScript only |
 
 The app is fully static once built: `dist/` can be dropped on any web host.
@@ -198,6 +198,12 @@ same holes, so a circuit half-built survives - and the two trainer panels move
 to stay beside it instead of being left spread out where the flat board had
 them.
 
+**Turning a package that is in the board** turns it round on the spot rather
+than lifting it out. A quarter turn cannot seat - the two rows of legs would be
+a package width apart across the columns, and nothing there is a hole - so it
+takes the half turn, which puts pin 1 at the other end and leaves every leg in
+the hole it was in. That is what you do with the real thing.
+
 Parts really do fit. Every pin of every part sits on the 0.1 inch hole pitch,
 and a part is only seated where **all** of its legs land in holes - so a
 seven-segment display cannot end up hanging half off a bank, and a second IC
@@ -284,7 +290,7 @@ src/
   data/experiments.ts   the twenty practicals
   store/lab.tsx         circuit state, undo/redo, simulation loop
   ui/                   toolbar, library, workspace, inspector, bench, panels
-test/                   101 tests over the engine, the library, placement, routing
+test/                   103 tests over the engine, the library, placement, routing
 ```
 
 Adding an IC means adding one entry to a file in `src/sim/ics/` — pins,
@@ -312,8 +318,9 @@ npm test
   deliberately miswired versions fail
 - the board itself: 60 columns and 840 tie points; a package seats with every
   leg in a hole with the board at each of the four rotations; a turned board is
-  wired up through its strips exactly like a flat one; and turning a board
-  carries a seated package round with it, still powered afterwards
+  wired up through its strips exactly like a flat one; turning a board carries
+  a seated package round with it, still powered afterwards; and turning a
+  seated package takes the half turn and keeps every leg in its hole
 - breadboard fit: every DIP and every seatable module lands with all of its
   legs in holes, a second DIP shifts clear of the first, and a part dropped
   away from the board is left where it was put

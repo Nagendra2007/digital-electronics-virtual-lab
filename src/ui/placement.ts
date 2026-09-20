@@ -199,6 +199,55 @@ export function rotateBoard(circuit: Circuit, boardId: string): void {
 }
 
 /**
+ * A quarter turn for a part that is sitting in a board.
+ *
+ * A package can only lie across the centre channel, so a quarter turn does not
+ * fit: turning one really means lifting it out and putting it back the other
+ * way round, which is a half turn, and is exactly what you do with the real
+ * thing. This finds the next turn that still seats and keeps the part where it
+ * was. Returns null when the part is not in a board, or when nothing fits -
+ * and then it is an ordinary quarter turn on the bench.
+ */
+export function turnOnBoard(
+  circuit: Circuit,
+  comp: PlacedComponent,
+): { x: number; y: number; rot: PlacedComponent['rot'] } | null {
+  const board = findBoard(circuit);
+  const model = getModel(comp.type);
+  if (!board || !model) return null;
+  if (!seatedOn(circuit, board).some((c) => c.id === comp.id)) return null;
+
+  const { pts, keys } = holesOf(board);
+  const others = otherBoxes(circuit, comp.id);
+  const now = boundsOf(model, comp);
+  const cx = now.x + now.w / 2;
+  const cy = now.y + now.h / 2;
+
+  for (let step = 1; step <= 3; step++) {
+    const rot = ((comp.rot + step * 90) % 360) as PlacedComponent['rot'];
+    const offsets = pinOffsets(model, rot);
+    if (!offsets.length) continue;
+    const first = offsets[0];
+    let best: { x: number; y: number; d: number } | null = null;
+
+    for (const hole of pts) {
+      const ox = hole.x - first.x;
+      const oy = hole.y - first.y;
+      if (!offsets.every((p) => keys.has(`${Math.round(ox + p.x)},${Math.round(oy + p.y)}`))) {
+        continue;
+      }
+      const box = boundsOf(model, { id: '_', type: comp.type, x: ox, y: oy, rot, props: {} });
+      if (others.some((b) => overlaps(b, box))) continue;
+      // Turn it on the spot: the seating nearest to where it already sits.
+      const d = Math.hypot(box.x + box.w / 2 - cx, box.y + box.h / 2 - cy);
+      if (!best || d < best.d) best = { x: ox, y: oy, d };
+    }
+    if (best) return { x: best.x, y: best.y, rot };
+  }
+  return null;
+}
+
+/**
  * Somewhere sensible to drop a part when the student clicks it in the library:
  * clear of everything already on the bench, and on the board when there is one,
  * because that is where a package is about to be used.

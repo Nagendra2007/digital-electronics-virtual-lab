@@ -21,7 +21,7 @@ import { createComponent, getModel, newCircuit, nextDesignator } from '../sim/re
 import { boundsOf } from '../sim/geometry';
 import { validate } from '../sim/validate';
 import { loadBench, saveBench } from '../sim/storage';
-import { rotateBoard } from '../ui/placement';
+import { rotateBoard, turnOnBoard } from '../ui/placement';
 import type { Circuit, CircuitSettings, NetValue, PinRef, PlacedComponent } from '../sim/types';
 import type { Issue } from '../sim/validate';
 import type { Experiment } from '../data/experiments';
@@ -388,8 +388,20 @@ export function LabProvider({ children }: { children: ReactNode }) {
           for (const c of d.components) {
             if (!selection.includes(c.id)) continue;
             // A board takes everything plugged into it round with it.
-            if (getModel(c.type)?.category === 'board') rotateBoard(d, c.id);
-            else c.rot = ((c.rot + 90) % 360) as PlacedComponent['rot'];
+            if (getModel(c.type)?.category === 'board') {
+              rotateBoard(d, c.id);
+              continue;
+            }
+            // A part in the board turns to the next way round that still
+            // seats, instead of being left lying on top of it.
+            const seated = turnOnBoard(d, c);
+            if (seated) {
+              c.x = seated.x;
+              c.y = seated.y;
+              c.rot = seated.rot;
+            } else {
+              c.rot = ((c.rot + 90) % 360) as PlacedComponent['rot'];
+            }
           }
         });
         // A turned board changes shape completely: bring it back into view.

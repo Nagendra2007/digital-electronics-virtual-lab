@@ -7,7 +7,7 @@ import { Bench } from './helpers';
 import { ALL_MODELS, getModel } from '../src/sim/registry';
 import { PIN_PITCH, boundsOf, layoutOf, pinWorldPos, seatsOnBoard } from '../src/sim/geometry';
 import { BB, BB_COLS, BB_ROWS, breadboard, holeCol, holeX } from '../src/sim/breadboard';
-import { placementFor, rotateBoard } from '../src/ui/placement';
+import { placementFor, rotateBoard, turnOnBoard } from '../src/ui/placement';
 import type { PlacedComponent } from '../src/sim/types';
 
 /** Every hole of a board placed at the origin. */
@@ -111,6 +111,49 @@ describe('the board itself', () => {
 
     expect(b.read(ic, 14), 'VCC reaches the package through the strips').toBe(1);
     expect(b.read(ic, 7), 'GND reaches the package through the strips').toBe(0);
+  });
+
+  it('turns a seated package end for end instead of dropping it out', () => {
+    const b = new Bench();
+    const board = b.add('breadboard');
+    b.comp(board).x = 0;
+    b.comp(board).y = 0;
+
+    const model = getModel('ic:7408')!;
+    const ic = b.add(model.type);
+    Object.assign(b.comp(ic), placementFor(b.circuit, model, 300, 260, 0, ic));
+    b.engine.rebuild(b.circuit);
+    expect(b.comp(ic).rot).toBe(90);
+
+    // A quarter turn cannot seat - the pin rows would be a package width apart
+    // across the columns - so it takes the half turn, the way you would turn
+    // the real thing round in the board.
+    const turned = turnOnBoard(b.circuit, b.comp(ic))!;
+    expect(turned, 'a seated package must have somewhere to turn to').not.toBeNull();
+    expect(turned.rot).toBe(270);
+
+    Object.assign(b.comp(ic), turned);
+    b.engine.rebuild(b.circuit);
+
+    const holes = holesOfBoard(b.comp(board));
+    for (const p of model.pins) {
+      const pos = pinWorldPos(model, b.comp(ic), p.n)!;
+      expect(
+        holes.has(`${Math.round(pos.x)},${Math.round(pos.y)}`),
+        `pin ${p.n} left the board when the package was turned`,
+      ).toBe(true);
+    }
+  });
+
+  it('leaves a part that is not in the board to turn normally', () => {
+    const b = new Bench();
+    const board = b.add('breadboard');
+    b.comp(board).x = 0;
+    b.comp(board).y = 0;
+    const loose = b.add('ic:7408');
+    b.comp(loose).x = 2000;
+    b.comp(loose).y = 2000;
+    expect(turnOnBoard(b.circuit, b.comp(loose))).toBeNull();
   });
 
   it('carries everything plugged in when it is turned', () => {
