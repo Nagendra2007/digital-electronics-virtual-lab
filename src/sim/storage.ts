@@ -4,7 +4,7 @@
  * A circuit file is plain structured JSON - components, wires, settings - which
  * makes it easy to export, mail to a demonstrator, and import again.
  */
-import { uid } from './registry';
+import { normaliseBoards, uid } from './registry';
 import { defaultSettings } from './types';
 import type { Circuit } from './types';
 
@@ -44,7 +44,8 @@ export function saveCircuit(circuit: Circuit): Circuit {
 }
 
 export function loadCircuit(id: string): Circuit | null {
-  return readAll()[id] ?? null;
+  const c = readAll()[id];
+  return c ? normaliseBoards(c) : null;
 }
 
 export function deleteCircuit(id: string) {
@@ -92,14 +93,14 @@ export function importCircuit(json: string): Circuit {
   if (!raw || !Array.isArray(raw.components) || !Array.isArray(raw.wires)) {
     throw new Error('That file does not look like a saved circuit.');
   }
-  return {
+  return normaliseBoards({
     ...raw,
     id: uid('ckt'),
     name: raw.name ?? 'Imported circuit',
     settings: { ...defaultSettings(), ...(raw.settings ?? {}) },
     createdAt: raw.createdAt ?? Date.now(),
     updatedAt: Date.now(),
-  };
+  });
 }
 
 export function downloadCircuit(circuit: Circuit) {
@@ -128,7 +129,7 @@ export function loadBench(): Circuit | null {
     const c = JSON.parse(raw) as Circuit;
     if (!Array.isArray(c.components)) return null;
     c.settings = { ...defaultSettings(), ...(c.settings ?? {}) };
-    return c;
+    return normaliseBoards(c);
   } catch {
     return null;
   }

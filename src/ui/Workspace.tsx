@@ -86,7 +86,15 @@ export function Workspace({
   const [hover, setHover] = useState<PinInfo | null>(null);
   const pointers = useRef(new Map<number, Point>());
   const [measured, setMeasured] = useState(false);
-  const pinchRef = useRef<{ dist: number; zoom: number } | null>(null);
+  // Where the two fingers started, so a pinch can zoom and drag at once.
+  const pinchRef = useRef<{
+    dist: number;
+    zoom: number;
+    px: number;
+    py: number;
+    vx: number;
+    vy: number;
+  } | null>(null);
 
   const toWorld = useCallback(
     (clientX: number, clientY: number): Point => {
@@ -217,16 +225,32 @@ export function Workspace({
   // ---------------------------------------------------------------- pointer
 
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
-    (e.target as Element).setPointerCapture?.(e.pointerId);
+    // Capture keeps a drag alive outside the SVG. It throws for a pointer the
+    // browser no longer considers active, which must not kill the gesture.
+    try {
+      (e.target as Element).setPointerCapture?.(e.pointerId);
+    } catch {
+      /* not capturable: the drag still works inside the workspace */
+    }
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
-      pinchRef.current = { dist: Math.hypot(a.x - b.x, a.y - b.y), zoom: view.zoom };
+      const rect = svgRef.current?.getBoundingClientRect();
+      pinchRef.current = {
+        dist: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        zoom: view.zoom,
+        px: (a.x + b.x) / 2 - (rect?.left ?? 0),
+        py: (a.y + b.y) / 2 - (rect?.top ?? 0),
+        vx: view.x,
+        vy: view.y,
+      };
       setDrag(null);
       return;
     }
 
     const world = toWorld(e.clientX, e.clientY);
+    const startPan = () =>
+      setDrag({ kind: 'pan', startX: e.clientX, startY: e.clientY, ox: view.x, oy: view.y });
 
     if (placing) {
       place(placing, world);
@@ -235,44 +259,55 @@ export function Workspace({
     }
 
     if (e.button === 1 || tool === 'pan' || e.altKey) {
-      setDrag({ kind: 'pan', startX: e.clientX, startY: e.clientY, ox: view.x, oy: view.y });
+      startPan();
       return;
     }
 
-    const pin = pinAt(world);
-    if (pin && tool !== 'delete') {
-      if (pending) {
-        if (pending.from.c === pin.compId && pending.from.p === pin.pin) return;
-        lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
-        setPending(null);
-      } else {
-        setPending({ from: { c: pin.compId, p: pin.pin }, pts: [], cursor: world });
-      }
-      return;
-    }
-
-    if (pending) {
-      // A click on empty space adds a corner to the wire being drawn.
-      setPending({ ...pending, pts: [...pending.pts, { x: Math.round(world.x), y: Math.round(world.y) }] });
-      return;
-    }
-
-    // Parts first, then wires, then the board underneath everything.
-    const comp = compAt(world, false) ?? (wireAt(world) ? null : compAt(world, true));
-    if (!comp) {
-      const wire = wireAt(world);
-      if (wire) {
-        if (tool === 'delete') lab.deleteWire(wire);
-        else {
-          lab.setSelectedWires([wire]);
-          lab.setSelection([]);
+    // Wiring is a mode of its own. A breadboard is nothing but pins, so if any
+    // touch on one started a wire there would be no way to move the view or
+    // pick anything up.
+    if (tool === 'wire' || pending) {
+      const pin = pinAt(world);
+      if (pin) {
+        if (pending) {
+          if (pending.from.c === pin.compId && pending.from.p === pin.pin) return;
+          lab.addWire(pending.from, { c: pin.compId, p: pin.pin }, pending.pts);
+          setPending(null);
+        } else {
+          setPending({ from: { c: pin.compId, p: pin.pin }, pts: [], cursor: world });
         }
         return;
       }
+      if (pending) {
+        // A click on empty space adds a corner to the wire being drawn.
+        setPending({
+          ...pending,
+          pts: [...pending.pts, { x: Math.round(world.x), y: Math.round(world.y) }],
+        });
+        return;
+      }
+    }
+
+    // Parts first, then wires, then the board underneath everything.
+    const overWire = wireAt(world);
+    const comp = compAt(world, false) ?? (overWire ? null : compAt(world, true));
+    if (!comp && overWire) {
+      if (tool === 'delete') lab.deleteWire(overWire);
+      else {
+        lab.setSelectedWires([overWire]);
+        lab.setSelection([]);
+      }
+      return;
     }
     if (comp) {
       if (tool === 'delete') {
         lab.deleteComponents([comp.id]);
+        return;
+      }
+      // On a touch screen the board covers the whole workspace, so dragging it
+      // has to move the view: otherwise the bench is a prison.
+      if (COARSE_POINTER && getModel(comp.type)?.category === 'board') {
+        startPan();
         return;
       }
       const already = lab.selection.includes(comp.id);
@@ -293,6 +328,11 @@ export function Workspace({
       lab.setSelection([]);
       lab.setSelectedWires([]);
     }
+    // A finger on bare bench drags the sheet; a mouse draws a selection box.
+    if (COARSE_POINTER) {
+      startPan();
+      return;
+    }
     setDrag({ kind: 'marquee', x0: world.x, y0: world.y, x1: world.x, y1: world.y });
   };
 
@@ -302,17 +342,18 @@ export function Workspace({
     }
     if (pointers.current.size === 2 && pinchRef.current) {
       const [a, b] = [...pointers.current.values()];
-      const dist = Math.hypot(a.x - b.x, a.y - b.y);
-      const zoom = (pinchRef.current.zoom * dist) / pinchRef.current.dist;
-      // Zoom about the midpoint of the two fingers, so the board stays put.
+      const p = pinchRef.current;
       const rect = svgRef.current?.getBoundingClientRect();
       const px = (a.x + b.x) / 2 - (rect?.left ?? 0);
       const py = (a.y + b.y) / 2 - (rect?.top ?? 0);
-      lab.setView((v) => {
-        const z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom));
-        const k = z / v.zoom;
-        return { zoom: z, x: px - (px - v.x) * k, y: py - (py - v.y) * k };
-      });
+      const zoom = Math.min(
+        ZOOM_MAX,
+        Math.max(ZOOM_MIN, (p.zoom * Math.hypot(a.x - b.x, a.y - b.y)) / p.dist),
+      );
+      // Two fingers pinch and drag at once: whatever you grabbed stays under
+      // them, so the board can be moved as well as scaled.
+      const k = zoom / p.zoom;
+      lab.setView({ zoom, x: px - (p.px - p.vx) * k, y: py - (p.py - p.vy) * k });
       return;
     }
 
@@ -456,6 +497,12 @@ export function Workspace({
     if (measured) lab.fitToContents();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measured, lab.fitRequest]);
+
+  // Leaving the wire tool abandons a half-drawn wire rather than leaving it
+  // armed to finish on the next thing you touch.
+  useEffect(() => {
+    if (tool !== 'wire') setPending(null);
+  }, [tool]);
 
   // ------------------------------------------------------------- keyboard
 

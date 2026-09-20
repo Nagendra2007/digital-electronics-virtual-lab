@@ -9,7 +9,7 @@ import type { ThemeName } from './theme';
 
 const TOOLS: { id: Tool; label: string; hint: string; glyph: string }[] = [
   { id: 'select', label: 'Select', hint: 'Select and move parts (V)', glyph: '◱' },
-  { id: 'wire', label: 'Wire', hint: 'Draw wires pin to pin (W)', glyph: '╱' },
+  { id: 'wire', label: 'Wire', hint: 'Wire mode: tap a pin, then another (W)', glyph: '╱' },
   { id: 'delete', label: 'Delete', hint: 'Tap a part or wire to remove it', glyph: '✗' },
   { id: 'pan', label: 'Pan', hint: 'Drag the sheet around', glyph: '✚' },
 ];
@@ -260,6 +260,21 @@ export function Toolbar({
 
       {/* Always reachable, never scrolled away. */}
       <div className="flex shrink-0 items-center gap-1.5 border-l border-bench-800 pl-1.5">
+        {/* On a phone the tool strip scrolls out of sight, and select/wire are
+            the two you swap between constantly, so they stay pinned here. */}
+        <div className="flex items-center gap-0.5 rounded-lg bg-bench-850 p-0.5 sm:hidden">
+          {TOOLS.slice(0, 2).map((t) => (
+            <button
+              key={t.id}
+              className={`btn btn-sm border-transparent bg-transparent shadow-none ${lab.tool === t.id ? 'btn-active' : ''}`}
+              onClick={() => lab.setTool(t.id)}
+              title={t.hint}
+              aria-label={t.label}
+            >
+              <span className="text-[13px] leading-none">{t.glyph}</span>
+            </button>
+          ))}
+        </div>
         <button
           className="btn btn-sm"
           onClick={onToggleTheme}

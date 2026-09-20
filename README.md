@@ -28,7 +28,7 @@ Then open http://localhost:5180.
 | `npm run dev` | dev server with hot reload |
 | `npm run build` | type-check and produce `dist/` |
 | `npm run preview` | serve the production build |
-| `npm test` | run the simulation test suite (97 tests) |
+| `npm test` | run the simulation test suite (100 tests) |
 | `npm run typecheck` | TypeScript only |
 
 The app is fully static once built: `dist/` can be dropped on any web host.
@@ -156,13 +156,14 @@ The lab is usable on a phone, with the workspace prioritised:
   the theme toggle pinned where they cannot scroll away;
 - Parts, Experiments and the Inspector slide in as full-height drawers, and the
   Parts drawer closes itself once a part is on the bench;
-- the board is framed so its holes are never smaller than a fingertip - about
-  33 px apart on a phone - and you slide along the board to reach the rest;
+- one finger drags the bench around and two fingers pinch it bigger; the whole
+  bench is framed on load, so pinch in on the part of the board you are using;
 - the inspector stays shut on anything narrower than a wide desktop, so the
   bench gets the room instead;
-- pin targets and buttons grow on touch screens, pinch zooms the bench, one
-  finger pans, and nothing pinches or double-taps the page itself;
-- wiring is tap-a-pin, tap-a-pin, with a Cancel button in place of the Esc key;
+- pin targets and buttons grow on touch screens, and nothing pinches or
+  double-taps the page itself;
+- wiring is a mode - tap **Wire**, then tap a pin and tap another - with a
+  Cancel button in place of the Esc key;
 - the bench I/O panel starts collapsed on a phone and stacks the writer, reader
   and clock into one scrolling column when you open it.
 
@@ -174,13 +175,14 @@ five holes is one node, the four long rails are the power buses, and the rails
 are dead until VCC and GND are wired to them. Wires attach to holes exactly as
 they attach to pins.
 
-The board is a full-width one - 36 columns, 504 tie points, five 14-pin
-packages side by side with room to wire between them - and it is the part of
-the bench the view looks after. When the whole bench will not fit on screen
-without shrinking the holes below the size of a fingertip, the view frames the
-**board** instead and leaves the trainer panels to one side to pan to. On a
-phone it fits the board's height and lets you slide along it, which is what you
-do with a long board on a small desk anyway.
+The board is a full-size one: **60 columns, 840 tie points**, at the same hole
+pitch and the same proportions as the board on a lab desk. That is eight
+14-pin packages in a row with a spare column between each for jumpers.
+
+The board does not rotate. Every part placed on it is seated against its hole
+grid, so turning the board would leave nothing able to find a hole - you move
+around a real breadboard rather than turning it. A board turned in an older
+saved bench is put back flat when the bench loads.
 
 Parts really do fit. Every pin of every part sits on the 0.1 inch hole pitch,
 and a part is only seated where **all** of its legs land in holes - so a
@@ -193,6 +195,15 @@ this is covered by tests.
 
 The centre channel is drawn wider than a real 0.3 inch DIP gap so the package
 body and its pin names stay readable at normal zoom.
+
+## Wiring is a mode
+
+Pick the **Wire** tool, then tap a pin and tap another. Outside wire mode a pin
+is just part of the package: the breadboard is 840 pins and nothing else, so if
+every touch on one started a wire there would be no way to move the view or
+pick anything up. Select and Wire stay pinned in the toolbar on a phone, where
+the rest of the strip scrolls away. Leaving wire mode abandons a half-drawn
+wire rather than leaving it armed.
 
 ## Wires route themselves
 
@@ -216,8 +227,12 @@ React in it, and it is unit tested.
 
 Ctrl+wheel, pinch and Ctrl+plus scale the **workspace**, never the page - so
 the toolbar and the bench I/O strip stay where they are and only the circuit
-grows. Wheel or one finger pans, `+` / `−` / `Fit` are in the toolbar, and the
-zoom runs from 25% to 300%.
+grows. `+` / `−` / `Fit` are in the toolbar, and the zoom runs from 25% to 300%.
+
+Panning: the wheel, Alt+drag or the Pan tool with a mouse. On a touch screen
+one finger drags the sheet - including when it lands on the board, because the
+board covers the workspace and there would otherwise be no way out - and two
+fingers pinch and drag together, so whatever you grabbed stays under them.
 
 ## Project layout
 
@@ -243,7 +258,7 @@ src/
   data/experiments.ts   the twenty practicals
   store/lab.tsx         circuit state, undo/redo, simulation loop
   ui/                   toolbar, library, workspace, inspector, bench, panels
-test/                   97 tests over the engine, the library, placement, routing
+test/                   100 tests over the engine, the library, placement, routing
 ```
 
 Adding an IC means adding one entry to a file in `src/sim/ics/` — pins,
@@ -269,6 +284,8 @@ npm test
 - the experiment checker: a correctly built half adder, full adder, SR latch,
   D flip-flop, counter, shift register and demultiplexer pass, and
   deliberately miswired versions fail
+- the board itself: 60 columns and 840 tie points, it refuses to rotate, and a
+  board turned in an older saved bench is put back flat on load
 - breadboard fit: every DIP and every seatable module lands with all of its
   legs in holes, a second DIP shifts clear of the first, and a part dropped
   away from the board is left where it was put

@@ -4,9 +4,9 @@
  */
 import { describe, expect, it } from 'vitest';
 import { Bench } from './helpers';
-import { ALL_MODELS, getModel } from '../src/sim/registry';
+import { ALL_MODELS, canRotate, getModel, normaliseBoards } from '../src/sim/registry';
 import { PIN_PITCH, layoutOf, pinWorldPos, seatsOnBoard } from '../src/sim/geometry';
-import { BB_COLS, BB_ROWS, holeX } from '../src/sim/breadboard';
+import { BB, BB_COLS, BB_ROWS, breadboard, holeX } from '../src/sim/breadboard';
 import { placementFor } from '../src/ui/placement';
 import type { PlacedComponent } from '../src/sim/types';
 
@@ -24,6 +24,31 @@ function holePositions(): Set<string> {
   for (let c = 0; c < BB_COLS; c++) for (const y of ys) out.add(`${holeX(c)},${y}`);
   return out;
 }
+
+describe('the board itself', () => {
+  it('is a full-size board: 60 columns, 840 tie points', () => {
+    expect(BB_COLS).toBe(60);
+    expect(BB.total).toBe(840);
+    expect(breadboard.pins).toHaveLength(840);
+  });
+
+  it('does not rotate, because everything is placed against its hole grid', () => {
+    expect(canRotate(breadboard)).toBe(false);
+    expect(canRotate(getModel('ic:7408')!)).toBe(true);
+  });
+
+  it('puts a board back flat when an older saved bench had it turned', () => {
+    const b = new Bench();
+    const board = b.add('breadboard');
+    b.comp(board).rot = 90;
+    const ic = b.add('ic:7408');
+    b.comp(ic).rot = 90;
+
+    normaliseBoards(b.circuit);
+    expect(b.comp(board).rot).toBe(0);
+    expect(b.comp(ic).rot, 'only boards are flattened').toBe(90);
+  });
+});
 
 describe('parts fit the breadboard', () => {
   it('every module has its pins on the hole pitch', () => {

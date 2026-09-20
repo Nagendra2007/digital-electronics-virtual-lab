@@ -17,8 +17,8 @@ import {
 } from 'react';
 import type { ReactNode } from 'react';
 import { CircuitEngine } from '../sim/engine';
-import { createComponent, getModel, newCircuit, nextDesignator } from '../sim/registry';
-import { PIN_PITCH, boundsOf } from '../sim/geometry';
+import { canRotate, createComponent, getModel, newCircuit, nextDesignator } from '../sim/registry';
+import { boundsOf } from '../sim/geometry';
 import { validate } from '../sim/validate';
 import { loadBench, saveBench } from '../sim/storage';
 import type { Circuit, CircuitSettings, NetValue, PinRef, PlacedComponent } from '../sim/types';
@@ -121,20 +121,15 @@ export const ZOOM_MIN = 0.25;
 export const ZOOM_MAX = 3;
 /** Fitting never blows a lone part up past this. */
 const ZOOM_FIT_MAX = 1.8;
-/**
- * Screen pixels between two breadboard holes, below which the board stops being
- * something you can actually wire - on a phone especially.
- */
-const MIN_HOLE_PX = 16;
 
 type Box = { x: number; y: number; w: number; h: number };
 
 const clampZoom = (z: number) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
 
-function boxesOf(circuit: Circuit): (Box & { type: string })[] {
+function boxesOf(circuit: Circuit): Box[] {
   return circuit.components.flatMap((c) => {
     const model = getModel(c.type);
-    return model ? [{ ...boundsOf(model, c), type: c.type }] : [];
+    return model ? [boundsOf(model, c)] : [];
   });
 }
 
@@ -156,46 +151,11 @@ function frame(boxes: Box[], w: number, h: number, pad: number, minZoom: number)
   return { zoom, x: (w - bw * zoom) / 2 - x0 * zoom, y: (h - bh * zoom) / 2 - y0 * zoom };
 }
 
-/**
- * Frame the board itself, keeping the holes big enough to hit with a finger.
- *
- * On a narrow screen that means fitting the board's height and letting it run
- * off the sides - you pan along it, which is what you do with a long board on
- * a small desk anyway.
- */
-function frameBoard(box: Box, w: number, h: number): View {
-  const pad = 14;
-  const zw = (w - pad * 2) / box.w;
-  const zh = (h - pad * 2) / box.h;
-  let zoom = Math.min(zw, zh, ZOOM_FIT_MAX);
-  if (zoom * PIN_PITCH < MIN_HOLE_PX) zoom = Math.min(zh, ZOOM_FIT_MAX);
-  zoom = clampZoom(Math.max(zoom, MIN_HOLE_PX / PIN_PITCH));
-
-  const bw = box.w * zoom;
-  const bh = box.h * zoom;
-  return {
-    zoom,
-    x: (bw <= w - pad * 2 ? (w - bw) / 2 : pad) - box.x * zoom,
-    y: (bh <= h - pad * 2 ? (h - bh) / 2 : pad) - box.y * zoom,
-  };
-}
-
-/**
- * Frame the bench inside a w x h drawing area.
- *
- * Normally that means everything. But the breadboard is where the work
- * actually happens, so when fitting the whole bench would shrink the holes
- * below the size of a fingertip, the board is framed on its own instead and
- * the trainer panels are left to one side to pan to.
- */
+/** Frame everything on the bench inside a w x h drawing area. */
 function fitView(circuit: Circuit, w: number, h: number): View {
   const boxes = boxesOf(circuit);
   if (!boxes.length || w < 40 || h < 40) return { zoom: 0.9, x: 40, y: 20 };
-
-  const all = frame(boxes, w, h, 24, ZOOM_MIN);
-  const board = boxes.find((b) => b.type === 'breadboard');
-  if (!board || all.zoom * PIN_PITCH >= MIN_HOLE_PX) return all;
-  return frameBoard(board, w, h);
+  return frame(boxes, w, h, 24, ZOOM_MIN);
 }
 
 const LabContext = createContext<LabApi | null>(null);
@@ -422,7 +382,10 @@ export function LabProvider({ children }: { children: ReactNode }) {
         if (!selection.length) return;
         commit((d) => {
           for (const c of d.components) {
-            if (selection.includes(c.id)) c.rot = (((c.rot + 90) % 360) as PlacedComponent['rot']);
+            if (!selection.includes(c.id)) continue;
+            const model = getModel(c.type);
+            if (model && !canRotate(model)) continue;
+            c.rot = ((c.rot + 90) % 360) as PlacedComponent['rot'];
           }
         });
       },

@@ -234,7 +234,10 @@ function HelpDialog({ onClose }: { onClose: () => void }) {
                 Wire VCC and GND to the package first. Nothing in a TTL circuit works until it is
                 powered, and the Checks tab will keep reminding you.
               </li>
-              <li>Click a pin, then click another pin, to run a wire between them.</li>
+              <li>
+                Switch to the <strong>Wire</strong> tool, then click a pin and click another pin
+                to run a wire between them. Switch back to <strong>Select</strong> to move parts.
+              </li>
               <li>Drive inputs from the Digital Writer (D0-D7) and read outputs on R8-R15.</li>
               <li>Press Run and flip the writer switches.</li>
             </ol>
@@ -242,10 +245,12 @@ function HelpDialog({ onClose }: { onClose: () => void }) {
           <div>
             <h3 className="mb-1 text-[13px] font-semibold text-bench-100">Wires</h3>
             <p>
-              Drag from one pin to another, or click a pin, click empty space to put a corner in,
-              and click the destination pin. Esc or right-click cancels. Wires are coloured by
-              level: red is HIGH, blue is LOW, and an animated amber dash means the node is
-              floating - nothing is driving it.
+              Wiring is a mode: pick the <strong>Wire</strong> tool first. Then drag from one pin
+              to another, or click a pin, click empty space to put a corner in, and click the
+              destination pin. Esc or right-click cancels. Outside wire mode a pin is just part of
+              the package, so dragging a breadboard moves the view instead of starting a wire.
+              Wires are coloured by level: red is HIGH, blue is LOW, and an animated amber dash
+              means the node is floating - nothing is driving it.
             </p>
             <p className="mt-1">
               Each wire routes itself around the packages, the way you would push a jumper flat

@@ -18,6 +18,22 @@ export const MODELS = new Map(ALL_MODELS.map((m) => [m.type, m]));
 
 export const getModel = (type: string): ComponentModel | undefined => MODELS.get(type);
 
+/**
+ * A breadboard lies flat on the bench and every part placed on it is seated
+ * against its hole grid, so it does not turn - you move yourself around a real
+ * one, not the board. Everything else rotates.
+ */
+export const canRotate = (model: ComponentModel): boolean => model.category !== 'board';
+
+/** Put any board that was turned in an older saved bench back flat. */
+export function normaliseBoards(circuit: Circuit): Circuit {
+  for (const c of circuit.components) {
+    const model = getModel(c.type);
+    if (model && !canRotate(model)) c.rot = 0;
+  }
+  return circuit;
+}
+
 export const CATEGORY_LABELS: Record<Category, string> = {
   gate: 'Logic gates',
   decoder: 'Decoders',

@@ -11,26 +11,26 @@ import type { ComponentModel, PinDef } from './types';
 import type { Layout, PinPos } from './geometry';
 
 /**
- * A full-width board: 36 columns is five 14-pin packages side by side with room
- * to wire between them, and the dead space above and below the banks is kept
- * tight so the board can be drawn large on screen.
+ * A full-size board: 60 columns, so 840 tie points - the same hole pitch and
+ * the same proportions as a bench breadboard, with the room a real one gives
+ * you rather than the stub you get on a trainer kit.
  */
-export const BB_COLS = 36;
+export const BB_COLS = 60;
 const MARGIN_X = 30;
 
 export const BB_ROWS = {
-  railTopPlus: 20,
-  railTopMinus: 40,
-  bankTop: 68, // row A; B..E follow at PIN_PITCH
-  bankBottom: 68 + 4 * PIN_PITCH + DIP_W, // row F, one DIP width below row E
+  railTopPlus: 22,
+  railTopMinus: 42,
+  bankTop: 84, // row A; B..E follow at PIN_PITCH
+  bankBottom: 84 + 4 * PIN_PITCH + DIP_W, // row F, one DIP width below row E
   railBotPlus: 0, // filled in below
   railBotMinus: 0,
 };
-BB_ROWS.railBotPlus = BB_ROWS.bankBottom + 4 * PIN_PITCH + 24;
-BB_ROWS.railBotMinus = BB_ROWS.railBotPlus + PIN_PITCH;
+BB_ROWS.railBotPlus = BB_ROWS.bankBottom + 4 * PIN_PITCH + 42;
+BB_ROWS.railBotMinus = BB_ROWS.railBotPlus + 20;
 
 export const BB_W = MARGIN_X * 2 + (BB_COLS - 1) * PIN_PITCH;
-export const BB_H = BB_ROWS.railBotMinus + 20;
+export const BB_H = BB_ROWS.railBotMinus + 24;
 
 export const ROW_LETTERS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'];
 
